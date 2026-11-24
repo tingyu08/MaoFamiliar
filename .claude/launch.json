@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "familiar-demo",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "--directory", "backend", "python", "tests/e2e/demo_server.py"],
+      "port": 8766
+    }
+  ]
+}

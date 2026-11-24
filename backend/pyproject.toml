@@ -1,0 +1,45 @@
+[project]
+name = "familiar"
+version = "0.1.0"
+description = "通用 AI 電腦操作代理人（見 docs/）"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.165.0",
+    "google-genai>=3.2",
+    "pillow>=13.0.0",
+    "playwright>=1.65.2",
+    "pydantic>=2.8",
+    "python-dotenv>=1.2.4",
+    "pyyaml>=6.0.4",
+    "tzdata>=2026.6",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=9.2.0",
+    "pytest-asyncio>=1.5.0",
+    "pytest-cov>=7.1.0",
+    "pytest-timeout>=2.4.0",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+timeout = 90
+markers = ["live: 會呼叫真的 Gemini API、消耗免費額度（預設不執行，用 -m live 執行）"]
+addopts = "-m 'not live'"
+
+[tool.coverage.run]
+source = ["familiar"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true

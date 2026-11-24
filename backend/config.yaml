@@ -1,0 +1,39 @@
+# Familiar 設定（SDD 第 9 節）。API key 不放這裡，放在 .env 的 GEMINI_API_KEY。
+
+gemini:
+  models:                       # 每個模型的免費版配額（多條鏈共用）；0 = 未知
+    gemini-4-hydrogen:     { rpm: 0, rpd: 20 }   # 第 0 週 429 訊息
+    gemini-3.8-flash:      { rpm: 0, rpd: 0 }    # 尚未測到
+    gemini-3.6-flash:      { rpm: 5, rpd: 20 }   # 第 0 週 429 訊息
+    gemini-3.5-flash-lite: { rpm: 0, rpd: 0 }    # 尚未撞到上限
+  backend: custom_fc            # 預設動作後端；可改為 native_cu
+  chains:
+    action:   [gemini-3.5-flash-lite, gemini-3.6-flash, gemini-3.8-flash]
+    planning: [gemini-4-hydrogen, gemini-3.8-flash, gemini-3.6-flash, gemini-3.5-flash-lite]
+  overload:                     # 503 過載／逾時的處理
+    fallback_retries: 1         # 鏈上還有其他可用模型：只重試 1 次就換模型
+    fallback_backoff_sec: 5
+    retries: 3                  # 已經是最後一個可用模型：完整重試
+    backoff_sec: [10, 20, 40]
+    cooldown_initial_sec: 60    # 重試仍失敗 → 先停用 60 秒；連續過載依序加倍（2、4、8 分鐘…）
+    cooldown_max_min: 10        # 冷卻上限；呼叫成功或換日後重新從 60 秒起算
+  decision:
+    model: gemini-decision-1
+    rpm: 200
+    rpd: 10000
+    tpm: 50000                  # 每分鐘輸入 token（第 0 週 429 訊息）
+    screenshot_max_side: 1024
+    confidence_threshold: 0.8
+  enable_prompt_injection_detection: true
+
+browser:
+  viewport: { width: 1280, height: 800 }
+  blocked_domains: []
+
+desktop:
+  emergency_stop_hotkey: "ctrl+alt+q"
+  blocked_windows: [1Password, Bitwarden, KeePass]
+
+server:
+  host: "127.0.0.1"
+  port: 8765

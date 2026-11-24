@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <title>測試表單</title>
+  <style>
+    body { margin: 0; font-family: sans-serif; }
+    #go { position: absolute; left: 100px; top: 100px; width: 160px; height: 50px; }
+    #name { position: absolute; left: 100px; top: 200px; width: 240px; height: 30px; }
+    #pw { position: absolute; left: 100px; top: 260px; width: 240px; height: 30px; }
+    #link { position: absolute; left: 100px; top: 330px; }
+    #hidden { display: none; }
+    #out { position: absolute; left: 400px; top: 100px; }
+  </style>
+</head>
+<body>
+  <button id="go" onclick="document.getElementById('out').textContent = '已點擊:' + document.getElementById('name').value">送出表單</button>
+  <input id="name" placeholder="你的名字">
+  <input id="pw" type="password" placeholder="密碼" value="topsecret">
+  <a id="link" href="/second.html">前往第二頁</a>
+  <button id="hidden">看不到的按鈕</button>
+  <div id="out">尚未點擊</div>
+  <script>
+    document.addEventListener('keydown', (e) => {
+      if (e.ctrlKey && e.key === 'k') { document.getElementById('out').textContent = '快捷鍵 Ctrl+K'; }
+    });
+  </script>
+</body>
+</html>

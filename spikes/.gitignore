@@ -1,0 +1,5 @@
+.env
+.venv/
+results/
+fixtures/generated/
+__pycache__/
