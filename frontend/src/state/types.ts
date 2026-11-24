@@ -64,6 +64,7 @@ export interface LiveState {
   connection: ConnectionState;
   taskId: string | null;
   mode: "agent" | "replay" | null;
+  realtime: boolean; // 遊戲模式
   healing: string | null; // 技能重播失敗、AI 接手修復時的原因
   target: string | null;
   instruction: string | null;

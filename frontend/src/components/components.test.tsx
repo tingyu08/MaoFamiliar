@@ -33,7 +33,11 @@ describe("NewTaskForm", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("描述");
     fireEvent.change(screen.getByPlaceholderText(/例如/), { target: { value: " 找公告 " } });
     fireEvent.click(screen.getByRole("button", { name: "開始" }));
-    await waitFor(() => expect(onStart).toHaveBeenCalledWith("https://a.b", "找公告"));
+    await waitFor(() => expect(onStart).toHaveBeenCalledWith("https://a.b", "找公告", "ui"));
+    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.change(screen.getByPlaceholderText(/例如/), { target: { value: "玩第一關" } });
+    fireEvent.click(screen.getByRole("button", { name: "開始" }));
+    await waitFor(() => expect(onStart).toHaveBeenCalledWith("https://a.b", "玩第一關", "realtime"));
   });
 
   it("is disabled while a task runs", () => {
@@ -103,6 +107,17 @@ describe("StepLog layers", () => {
     expect(screen.getByText("Decisions")).toBeInTheDocument();
     expect(screen.getByText("3.5 flash lite")).toBeInTheDocument();
     expect(screen.getByText("定位方式：CSS")).toBeInTheDocument();
+  });
+
+  it("labels reflex key presses and shows the reflex report", () => {
+    render(<StepLog steps={[
+      { index: 0, layer: "reflex", model: "gemini-decision-1", action: { kind: "tap_keys", args: { keys: ["a"], times: 3 }, intent: "反射：attack" }, ok: true, message: "" },
+      { index: 1, layer: "agent", model: "gemini-3.5-flash-lite", action: { kind: "set_reflex", args: { rules: [{}, {}], iterations: 5 }, intent: "交給反射層" }, ok: true, message: "反射層跑了 1 輪" },
+    ]} />);
+    expect(screen.getByText("反射")).toBeInTheDocument();
+    expect(screen.getByText("連按按鍵 a ×3")).toBeInTheDocument();
+    expect(screen.getByText("交給反射層 2 條規則，5 輪")).toBeInTheDocument();
+    expect(screen.getByText("反射層跑了 1 輪")).toBeInTheDocument();
   });
 });
 

@@ -103,8 +103,45 @@ async def test_ref_for_css(browser):
     assert await browser.ref_for_css(":::bad") is None
 
 
+async def test_hold_tap_and_focus_box_on_game_page(browser, page_server):
+    await browser.execute(Action(ActionKind.NAVIGATE, {"url": f"{page_server}/game.html"}))
+    box = await browser.focus_box()
+    assert box == {"x1": 200, "y1": 150, "x2": 840, "y2": 550}  # 最大的 canvas 就是遊戲畫面
+
+    held = await browser.execute(Action(ActionKind.HOLD_KEYS, {"keys": ("right",), "seconds": 0.4}))
+    assert held.ok
+    events = await browser.page.evaluate("window.events")
+    [up] = [e for e in events if e["type"] == "up"]
+    assert up["key"] == "ArrowRight" and up["held"] >= 350
+
+    await browser.page.evaluate("window.events = []")
+    assert (await browser.execute(Action(ActionKind.TAP_KEYS, {"keys": ("a",), "times": 3}))).ok
+    taps = await browser.page.evaluate("window.events")
+    assert [e["type"] for e in taps] == ["down", "up"] * 3
+    # 每次點按都要按住一小段時間，每格畫面才讀一次按鍵的遊戲（Flash／Ruffle）才不會漏掉
+    assert all(e["held"] >= 40 for e in taps if e["type"] == "up")
+
+    assert (await browser.execute(Action(ActionKind.HOLD_MOUSE, {"button": "left", "seconds": 0.3}))).ok
+    assert await browser.page.evaluate("window.mouseHeld") >= 250
+
+
+async def test_reveal_focus_scrolls_a_clipped_game_into_view(browser, page_server):
+    await browser.execute(Action(ActionKind.NAVIGATE, {"url": f"{page_server}/game.html"}))
+    assert await browser.reveal_focus() is False  # 已經完整可見，不捲動
+
+    await browser.page.evaluate("document.getElementById('game').style.top = '600px'")  # 下緣超出 800px 視窗
+    assert (await browser.focus_box())["y2"] == 800
+    assert await browser.reveal_focus() is True
+    box = await browser.focus_box()
+    assert box["y2"] - box["y1"] == 400  # 整個遊戲畫面都看得到
+
+
+async def test_focus_box_without_game_area(browser):
+    assert await browser.focus_box() is None
+
+
 async def test_errors_are_returned_not_raised(browser):
     unknown_ref = await browser.execute(Action(ActionKind.CLICK_ELEMENT, {"ref": "e999"}))
     assert not unknown_ref.ok and "e999" in unknown_ref.message
-    unsupported = await browser.execute(Action(ActionKind.HOLD_KEYS, {"keys": ("w",), "seconds": 1}))
+    unsupported = await browser.execute(Action(ActionKind.LOOK, {"dx": 10, "dy": 0}))
     assert not unsupported.ok

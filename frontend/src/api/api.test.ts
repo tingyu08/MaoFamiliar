@@ -15,7 +15,7 @@ describe("createApi", () => {
     const [url, init] = fetcher.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe("/api/tasks");
     expect((init.headers as Record<string, string>).Authorization).toBe("Bearer tok");
-    expect(JSON.parse(String(init.body))).toEqual({ url: "https://a.b", instruction: "找公告" });
+    expect(JSON.parse(String(init.body))).toEqual({ url: "https://a.b", instruction: "找公告", mode: "ui" });
   });
 
   it("throws the server error message", async () => {

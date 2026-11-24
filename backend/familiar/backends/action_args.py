@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Annotated, Literal
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 
 from familiar.core.models import ActionKind, OperatingMode, Risk
 
@@ -142,6 +142,45 @@ class RequestModeArgs(_Base):
     reason: str = Field(default="", max_length=300)
 
 
+REFLEX_UNKNOWN = "unknown"  # 保留給「沒有規則符合」
+MAX_REFLEX_SECONDS = 2.0
+MAX_REFLEX_ITERATIONS = 60
+
+
+class ReflexRuleArgs(BaseModel):
+    """反射規則：畫面符合 when 的描述時，立刻做 action。"""
+
+    model_config = ConfigDict(frozen=True, extra="ignore")
+    id: str = Field(pattern=r"^[a-z0-9_]{1,30}$")
+    when: str = Field(min_length=1, max_length=200)
+    action: Literal["hold", "tap", "wait"]
+    keys: list[Key] = Field(default_factory=list, max_length=3)
+    seconds: float = Field(default=0.3, gt=0, le=MAX_REFLEX_SECONDS)
+    times: int = Field(default=1, ge=1, le=5)
+
+    @model_validator(mode="after")
+    def _keys_for_key_actions(self) -> "ReflexRuleArgs":
+        if self.id == REFLEX_UNKNOWN:
+            raise ValueError(f"規則代號不能用保留字 {REFLEX_UNKNOWN}")
+        if self.action != "wait" and not self.keys:
+            raise ValueError(f"規則 {self.id}：{self.action} 需要 keys")
+        return self
+
+
+class SetReflexArgs(_Base):
+    question: str = Field(min_length=1, max_length=500)
+    rules: list[ReflexRuleArgs] = Field(min_length=2, max_length=12)
+    iterations: int = Field(default=20, ge=1, le=MAX_REFLEX_ITERATIONS)
+
+    @field_validator("rules")
+    @classmethod
+    def _unique_ids(cls, rules: list[ReflexRuleArgs]) -> list[ReflexRuleArgs]:
+        ids = [rule.id for rule in rules]
+        if len(set(ids)) != len(ids):
+            raise ValueError("規則代號不能重複")
+        return rules
+
+
 ARG_MODELS: dict[ActionKind, type[_Base]] = {
     ActionKind.CLICK: PointArgs,
     ActionKind.DOUBLE_CLICK: PointArgs,
@@ -154,6 +193,7 @@ ARG_MODELS: dict[ActionKind, type[_Base]] = {
     ActionKind.LOOK: LookArgs,
     ActionKind.HOLD_MOUSE: HoldMouseArgs,
     ActionKind.TAP_KEYS: TapKeysArgs,
+    ActionKind.SET_REFLEX: SetReflexArgs,
     ActionKind.NAVIGATE: NavigateArgs,
     ActionKind.GO_BACK: GoBackArgs,
     ActionKind.CLICK_ELEMENT: ClickElementArgs,

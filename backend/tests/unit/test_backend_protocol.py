@@ -11,9 +11,12 @@ def test_backends_satisfy_protocol(backend):
     assert isinstance(backend, ActionBackend)
 
 
-def test_browser_realtime_is_rejected():
-    with pytest.raises(ValueError):
-        CustomFcBackend().tools(Environment.BROWSER, OperatingMode.REALTIME)
+def test_browser_realtime_adds_hold_actions_but_not_look():
+    names = {t["name"] for t in CustomFcBackend().tools(Environment.BROWSER, OperatingMode.REALTIME)}
+    assert {"hold_keys", "tap_keys", "hold_mouse", "click_element", "navigate"} <= names
+    assert "look" not in names
+    ui_names = {t["name"] for t in CustomFcBackend().tools(Environment.BROWSER, OperatingMode.UI)}
+    assert "hold_keys" not in ui_names
 
 
 def test_sdk_style_call_objects_are_accepted():

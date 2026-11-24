@@ -12,7 +12,10 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from familiar.core.safety import SafetyConfig
 from familiar.gemini.model_router import Role, RouterConfig
 from familiar.gemini.quota import ModelLimits
+from familiar.knowledge.completion_check import CompletionConfig
+from familiar.backends.action_args import MAX_REFLEX_ITERATIONS
 from familiar.knowledge.decision_actor import ActorConfig
+from familiar.knowledge.reflex import ReflexConfig
 
 
 class _Strict(BaseModel):
@@ -58,6 +61,23 @@ class ActorCfg(_Strict):
     stall_steps: int = Field(default=2, ge=1)
 
 
+class CompletionCfg(_Strict):
+    """完成檢查（FR-605）：模型回報完成前先看畫面確認。"""
+    enabled: bool = True
+    threshold: float = Field(default=0.5, gt=0, le=1)
+    max_rejections: int = Field(default=2, ge=0, le=10)
+
+
+class ReflexCfg(_Strict):
+    """反射層：遊戲模式下 Decisions 看畫面、照代理人定的規則按鍵（FR-670～676）。"""
+    enabled: bool = True
+    max_side: int = Field(default=512, ge=128, le=2048)
+    threshold: float = Field(default=0.5, gt=0, le=1)
+    max_unknown: int = Field(default=3, ge=1, le=20)
+    stall_ticks: int = Field(default=6, ge=2, le=60)
+    max_iterations: int = Field(default=60, ge=1, le=MAX_REFLEX_ITERATIONS)
+
+
 class GeminiCfg(BaseModel):
     model_config = ConfigDict(frozen=True, extra="ignore")
     models: dict[str, LimitsCfg] = Field(min_length=1)
@@ -66,6 +86,8 @@ class GeminiCfg(BaseModel):
     overload: OverloadCfg = OverloadCfg()
     decision: DecisionCfg = DecisionCfg()
     actor: ActorCfg = ActorCfg()
+    completion_check: CompletionCfg = CompletionCfg()
+    reflex: ReflexCfg = ReflexCfg()
     enable_prompt_injection_detection: bool = True
 
     @model_validator(mode="after")
@@ -121,6 +143,18 @@ def to_actor_config(config: AppConfig) -> ActorConfig:
     return ActorConfig(enabled=a.enabled, mark_threshold=a.mark_threshold, risk_threshold=a.risk_threshold,
                        max_candidates=a.max_candidates, stall_steps=a.stall_steps,
                        screenshot_max_side=config.gemini.decision.screenshot_max_side)
+
+
+def to_completion_config(config: AppConfig) -> CompletionConfig:
+    c = config.gemini.completion_check
+    return CompletionConfig(enabled=c.enabled, threshold=c.threshold, max_rejections=c.max_rejections,
+                            screenshot_max_side=config.gemini.decision.screenshot_max_side)
+
+
+def to_reflex_config(config: AppConfig) -> ReflexConfig:
+    r = config.gemini.reflex
+    return ReflexConfig(enabled=r.enabled, max_side=r.max_side, threshold=r.threshold, max_unknown=r.max_unknown,
+                        stall_ticks=r.stall_ticks, max_iterations=r.max_iterations)
 
 
 def to_safety_config(config: AppConfig) -> SafetyConfig:

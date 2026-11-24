@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <title>測試遊戲</title>
+  <style>
+    body { margin: 0; background: #eee; }
+    #header { height: 120px; background: #fc0; }
+    #game { position: absolute; left: 200px; top: 150px; width: 640px; height: 400px; background: #222; }
+    #log { position: absolute; left: 900px; top: 150px; }
+  </style>
+</head>
+<body>
+  <div id="header">網站標題與廣告（不會動）</div>
+  <canvas id="game" width="640" height="400" tabindex="0"></canvas>
+  <div id="log"></div>
+  <script>
+    // 記錄按下與放開的時間，讓測試檢查「按住」是否真的持續一段時間
+    window.events = [];
+    const down = {};
+    document.addEventListener('keydown', (e) => {
+      if (e.repeat) return;
+      down[e.key] = performance.now();
+      window.events.push({ type: 'down', key: e.key });
+    });
+    document.addEventListener('keyup', (e) => {
+      window.events.push({ type: 'up', key: e.key, held: performance.now() - (down[e.key] || 0) });
+      delete down[e.key];
+    });
+    document.addEventListener('mousedown', () => { window.mouseDownAt = performance.now(); });
+    document.addEventListener('mouseup', () => { window.mouseHeld = performance.now() - window.mouseDownAt; });
+    // 角色：按住右鍵就往右走
+    let x = 40;
+    const ctx = document.getElementById('game').getContext('2d');
+    function draw() {
+      if (down['ArrowRight']) x = Math.min(600, x + 4);
+      ctx.fillStyle = '#222'; ctx.fillRect(0, 0, 640, 400);
+      ctx.fillStyle = '#a0f'; ctx.fillRect(x, 300, 40, 60);
+      requestAnimationFrame(draw);
+    }
+    draw();
+  </script>
+</body>
+</html>

@@ -49,8 +49,8 @@ export function createApi(token: string, fetcher: FetchLike = (i, init) => fetch
   }
 
   return {
-    async createTask(url: string, instruction: string): Promise<TaskRecord> {
-      return (await request<TaskRecord>("/api/tasks", { method: "POST", body: JSON.stringify({ url, instruction }) })).data;
+    async createTask(url: string, instruction: string, mode: "ui" | "realtime" = "ui"): Promise<TaskRecord> {
+      return (await request<TaskRecord>("/api/tasks", { method: "POST", body: JSON.stringify({ url, instruction, mode }) })).data;
     },
     async listTasks(limit = 20, offset = 0): Promise<Page<TaskRecord[]>> {
       const body = await request<TaskRecord[]>(`/api/tasks?limit=${limit}&offset=${offset}`);

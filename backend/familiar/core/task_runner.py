@@ -14,7 +14,7 @@ from familiar.core.agent_loop import AgentLoop
 from familiar.core.agent_types import LoopResult, StepInfo, TaskSpec
 from familiar.core.control import TaskControl
 from familiar.core.events import EventSink, make_event
-from familiar.core.models import Environment
+from familiar.core.models import Environment, OperatingMode
 from familiar.core.tasks import TaskRecord, TaskStatus
 from familiar.executors.base import Executor
 from familiar.knowledge.replay import ReplayContext, run_replay
@@ -76,9 +76,11 @@ class TaskRunner:
         """後端啟動時呼叫：上次沒結束的任務標為失敗（NFR-301）。"""
         return self._repo.fail_running("後端重新啟動，任務中斷", self._clock())
 
-    async def start(self, url: str, instruction: str) -> TaskRecord:
+    async def start(self, url: str, instruction: str, mode: OperatingMode = OperatingMode.UI) -> TaskRecord:
+        """mode=REALTIME 是遊戲模式：可以按住按鍵、卡住偵測只看遊戲畫面。"""
         validate_request(url, instruction)
-        return await self._launch(url, instruction.strip(), "browser", None, lambda loop, spec: loop.run(spec))
+        return await self._launch(url, instruction.strip(), "realtime" if mode is OperatingMode.REALTIME else "browser",
+                                  None, lambda loop, spec: loop.run(spec), mode)
 
     async def start_replay(self, skill_id: str) -> TaskRecord:
         """重播技能（第 1 層）；失敗時自動交給代理人修復（FR-303、FR-404）。"""
@@ -93,7 +95,8 @@ class TaskRunner:
 
         return await self._launch(meta.start_url, f"重播技能：{meta.name}", "replay", skill_id, body)
 
-    async def _launch(self, url: str, instruction: str, mode: str, skill_id: str | None, body: RunBody) -> TaskRecord:
+    async def _launch(self, url: str, instruction: str, mode: str, skill_id: str | None, body: RunBody,
+                      operating: OperatingMode = OperatingMode.UI) -> TaskRecord:
         if self.current_task_id:
             raise TaskBusyError("已經有任務在執行，請先停止或等它結束")
         record = TaskRecord(id=uuid.uuid4().hex[:16], environment=Environment.BROWSER.value, target=url,
@@ -101,12 +104,14 @@ class TaskRunner:
                             created_at=self._clock(), skill_id=skill_id)
         self._repo.create(record)
         control = TaskControl()
-        spec = TaskSpec(task_id=record.id, instruction=record.instruction, environment=Environment.BROWSER)
+        spec = TaskSpec(task_id=record.id, instruction=record.instruction, environment=Environment.BROWSER,
+                        mode=operating)
         job = asyncio.create_task(self._run(spec, url, control, body))
         self._current = _Running(record.id, control, job)
         await self._events.emit(make_event("task_started", task_id=record.id, target=url,
                                            instruction=record.instruction,
-                                           mode="replay" if skill_id else "agent", skill_id=skill_id))
+                                           mode="replay" if skill_id else "agent", skill_id=skill_id,
+                                           realtime=operating is OperatingMode.REALTIME))
         return record
 
     def stop(self, task_id: str) -> bool:

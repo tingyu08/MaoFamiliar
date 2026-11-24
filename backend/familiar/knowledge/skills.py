@@ -96,6 +96,8 @@ def build_steps(task: TaskRecord, records: Sequence[StepRecord]) -> tuple[SkillS
     """把成功任務的步驟轉成技能步驟（SRS FR-401、FR-402）。"""
     if task.status is not TaskStatus.SUCCEEDED:
         raise SkillBuildError("只有成功完成的任務才能存成技能")
+    if task.mode == "realtime":
+        raise SkillBuildError("遊戲模式的任務靠即時反應，照時間重播沒有意義，不能存成技能")
     return steps_from_records(records)
 
 

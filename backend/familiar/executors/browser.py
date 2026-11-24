@@ -14,7 +14,7 @@ from familiar.core.models import Action, ActionKind, Environment, Frame
 from familiar.executors.base import ELEMENT_KINDS, ExecResult, Screenshot
 from familiar.executors.dom_snapshot import describe_point, describe_ref, mark_css, ref_selector, snapshot_elements
 from familiar.executors.elements import ElementTable
-from familiar.executors.keys import to_playwright_combo
+from familiar.executors.keys import to_playwright_combo, to_playwright_key
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +22,33 @@ NAV_TIMEOUT_MS = 30_000
 ELEMENT_TIMEOUT_MS = 5_000
 SETTLE_TIMEOUT_MS = 3_000
 SCROLL_PIXELS_PER_NOTCH = 100
+TAP_GAP_SEC = 0.05
+TAP_HOLD_MS = 100  # 24fps 的 Flash 遊戲一格約 42ms；實測瞬間按放幾乎都被漏掉，按住才有反應
+# 網頁遊戲畫面：可見範圍內最大的 canvas／iframe／embed／object／video（至少 200×150）
+_FOCUS_JS = r"""() => {
+  const vw = window.innerWidth, vh = window.innerHeight;
+  let best = null, bestArea = 0;
+  for (const el of document.querySelectorAll('canvas, iframe, embed, object, video, ruffle-player, ruffle-embed')) {
+    const r = el.getBoundingClientRect();
+    const x1 = Math.max(0, r.left), y1 = Math.max(0, r.top), x2 = Math.min(vw, r.right), y2 = Math.min(vh, r.bottom);
+    const area = (x2 - x1) * (y2 - y1);
+    if (x2 - x1 >= 200 && y2 - y1 >= 150 && area > bestArea) { best = {x1, y1, x2, y2}; bestArea = area; }
+  }
+  return best && {x1: Math.round(best.x1), y1: Math.round(best.y1), x2: Math.round(best.x2), y2: Math.round(best.y2)};
+}"""
+# 遊戲畫面有一部分在視窗外（例如下緣被切掉）時，捲動頁面讓它整個露出來（放得下才捲）
+_REVEAL_FOCUS_JS = r"""() => {
+  const vw = window.innerWidth, vh = window.innerHeight;
+  let best = null, bestArea = 0;
+  for (const el of document.querySelectorAll('canvas, iframe, embed, object, video, ruffle-player, ruffle-embed')) {
+    const r = el.getBoundingClientRect();
+    const w = Math.min(vw, r.right) - Math.max(0, r.left), h = Math.min(vh, r.bottom) - Math.max(0, r.top);
+    if (w >= 200 && h >= 150 && w * h > bestArea) { best = r; bestArea = w * h; }
+  }
+  if (!best || best.height > vh || (best.top >= 0 && best.bottom <= vh)) return false;
+  window.scrollBy(0, best.top - (vh - best.height) / 2);
+  return true;
+}"""
 _IS_PASSWORD_FOCUSED_JS = (
     "() => { const e = document.activeElement;"
     " return !!e && e.tagName === 'INPUT' && (e.type || '').toLowerCase() === 'password'; }"
@@ -111,6 +138,20 @@ class BrowserExecutor:
             logger.info("動作執行失敗 %s：%s", action.kind.value, error)
             return ExecResult(False, _short(error, action))
         return ExecResult(True, locator=locator)
+
+    async def focus_box(self) -> dict[str, int] | None:
+        """網頁裡的遊戲畫面區域；即時模式的卡住偵測只看這一塊（四周的網站框架和廣告不會動）。"""
+        try:
+            return await self.page.evaluate(_FOCUS_JS)
+        except PlaywrightError:
+            return None
+
+    async def reveal_focus(self) -> bool:
+        """遊戲畫面被視窗切掉一部分時捲動頁面讓它完整露出；回傳是否有捲動。"""
+        try:
+            return bool(await self.page.evaluate(_REVEAL_FOCUS_JS))
+        except PlaywrightError:
+            return False
 
     async def element_at(self, x: float, y: float) -> dict[str, Any] | None:
         """座標上（最接近的可互動）元素的描述；重播用座標定位前先確認。"""
@@ -213,6 +254,37 @@ async def _wait(page: Any, a: Action) -> None:
     await asyncio.sleep(float(a.args.get("seconds", 1)))
 
 
+async def _hold_keys(page: Any, a: Action) -> None:
+    """同時按住多個鍵一段時間；不管中途發生什麼，最後一定放開（FR-005）。"""
+    pressed: list[str] = []
+    try:
+        for key in a.args["keys"]:
+            name = to_playwright_key(key)
+            await page.keyboard.down(name)
+            pressed.append(name)
+        await asyncio.sleep(float(a.args["seconds"]))
+    finally:
+        for name in reversed(pressed):
+            await page.keyboard.up(name)
+
+
+async def _tap_keys(page: Any, a: Action) -> None:
+    combo = to_playwright_combo(a.args["keys"])
+    for _ in range(int(a.args.get("times", 1))):
+        # 按住一小段時間再放開：Flash／Ruffle 這類遊戲每一格畫面（約 33ms）才讀一次按鍵狀態，瞬間按放會被漏掉
+        await page.keyboard.press(combo, delay=TAP_HOLD_MS)
+        await asyncio.sleep(TAP_GAP_SEC)
+
+
+async def _hold_mouse(page: Any, a: Action) -> None:
+    button = a.args.get("button", "left")
+    await page.mouse.down(button=button)
+    try:
+        await asyncio.sleep(float(a.args["seconds"]))
+    finally:
+        await page.mouse.up(button=button)
+
+
 _HANDLERS: dict[ActionKind, Handler] = {
     ActionKind.CLICK: _click,
     ActionKind.DOUBLE_CLICK: _double_click,
@@ -226,6 +298,9 @@ _HANDLERS: dict[ActionKind, Handler] = {
     ActionKind.CLICK_ELEMENT: _click_element,
     ActionKind.FILL_ELEMENT: _fill_element,
     ActionKind.WAIT: _wait,
+    ActionKind.HOLD_KEYS: _hold_keys,
+    ActionKind.TAP_KEYS: _tap_keys,
+    ActionKind.HOLD_MOUSE: _hold_mouse,
 }
 
 SUPPORTED_KINDS = frozenset(_HANDLERS)

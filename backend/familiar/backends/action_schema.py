@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from familiar.backends.action_args import MAX_ACTION_SECONDS, MAX_WAIT_SECONDS
+from familiar.backends.action_args import (
+    MAX_ACTION_SECONDS,
+    MAX_REFLEX_ITERATIONS,
+    MAX_REFLEX_SECONDS,
+    MAX_WAIT_SECONDS,
+)
 from familiar.core.models import ActionKind, Environment, OperatingMode
 
 Tool = dict[str, Any]
@@ -59,6 +64,22 @@ REALTIME: tuple[Tool, ...] = (
           ["seconds"]),
     _tool(ActionKind.TAP_KEYS, "連續點按這些按鍵數次",
           {"keys": _KEYS, "times": {"type": "integer"}}, ["keys"]),
+    _tool(ActionKind.SET_REFLEX,
+          "把需要即時反應的操作交給反射層（例如對齊敵人、攻擊、閃躲）。反射層每輪約 1 秒："
+          "看一次遊戲畫面 → 依各規則的 when 描述選出最符合的一條 → 立刻按對應的鍵，重複 iterations 輪，"
+          "最後把每條規則用了幾次、為什麼停下來回報給你。你再依結果調整規則或改做別的。",
+          {"question": {"type": "string", "description": "每輪要判斷的問題，例如「玩家角色和最近的敵人相對位置是？」"},
+           "rules": {"type": "array", "description": f"2–12 條規則；hold／wait 每次最多 {MAX_REFLEX_SECONDS:g} 秒",
+                     "items": {"type": "object", "properties": {
+                         "id": {"type": "string", "description": "英文小寫代號，例如 enemy_above"},
+                         "when": {"type": "string", "description": "什麼畫面情況用這條規則（具體描述看得到的東西）"},
+                         "action": {"type": "string", "enum": ["hold", "tap", "wait"]},
+                         "keys": _KEYS,
+                         "seconds": {"type": "number", "description": "hold／wait 的秒數"},
+                         "times": {"type": "integer", "description": "tap 的次數 1–5"}},
+                         "required": ["id", "when", "action"]}},
+           "iterations": {"type": "integer", "description": f"要跑幾輪，1–{MAX_REFLEX_ITERATIONS}，預設 20"}},
+          ["question", "rules"]),
 )
 
 BROWSER: tuple[Tool, ...] = (
@@ -109,9 +130,9 @@ def custom_tools(env: Environment, mode: OperatingMode) -> tuple[Tool, ...]:
     """custom_fc 後端在此環境、模式下提供給模型的全部動作。"""
     base = (*POINTER, *KEYBOARD, *WAIT, *_COMMON)
     if env is Environment.BROWSER:
-        if mode is OperatingMode.REALTIME:
-            raise ValueError("瀏覽器不支援即時模式")
-        return (*base, *BROWSER, *ELEMENTS)
+        # 網頁遊戲的即時模式：按住按鍵、連按、長按滑鼠（轉視角 look 需要指標鎖定，網頁不提供）
+        extra = tuple(t for t in REALTIME if t["name"] != ActionKind.LOOK.value) if mode is OperatingMode.REALTIME else ()
+        return (*base, *BROWSER, *ELEMENTS, *extra)
     extra = REALTIME if mode is OperatingMode.REALTIME else ()
     return (*base, *extra, *REQUEST_MODE)
 

@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from familiar.api.context import ServerSettings, Services
 from familiar.api.envelope import ok
+from familiar.core.models import OperatingMode
 from familiar.core.task_runner import InvalidTaskError, TaskBusyError
 
 
@@ -18,6 +19,7 @@ class CreateTaskRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     url: str = Field(min_length=1, max_length=2048)
     instruction: str = Field(min_length=1, max_length=2000)
+    mode: OperatingMode = OperatingMode.UI  # realtime：遊戲模式
 
 
 def services(request: Request) -> Services:
@@ -44,7 +46,7 @@ Svc = Annotated[Services, Depends(services)]
 @router.post("/tasks")
 async def create_task(body: CreateTaskRequest, svc: Svc):
     try:
-        record = await svc.runner.start(body.url, body.instruction)
+        record = await svc.runner.start(body.url, body.instruction, body.mode)
     except InvalidTaskError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     except TaskBusyError as error:

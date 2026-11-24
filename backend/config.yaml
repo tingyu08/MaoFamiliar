@@ -10,13 +10,16 @@ gemini:
   chains:
     action:   [gemini-3.5-flash-lite, gemini-3.6-flash, gemini-3.8-flash]
     planning: [gemini-4-hydrogen, gemini-3.8-flash, gemini-3.6-flash, gemini-3.5-flash-lite]
-  overload:                     # 503 過載／逾時的處理
-    fallback_retries: 1         # 鏈上還有其他可用模型：只重試 1 次就換模型
-    fallback_backoff_sec: 5
-    retries: 3                  # 已經是最後一個可用模型：完整重試
-    backoff_sec: [10, 20, 40]
-    cooldown_initial_sec: 60    # 重試仍失敗 → 先停用 60 秒；連續過載依序加倍（2、4、8 分鐘…）
-    cooldown_max_min: 10        # 冷卻上限；呼叫成功或換日後重新從 60 秒起算
+  overload:                     # 503 過載／逾時的處理：目前是「全速」設定（2026-11-24 依使用者要求）
+    fallback_retries: 0         # 不重試：一失敗就換下一個模型
+    fallback_backoff_sec: 0
+    retries: 0                  # 最後一個可用模型也不重試
+    backoff_sec: [0]
+    cooldown_initial_sec: 3     # 失敗的模型只停用 3 秒（不能是 0：所有模型同時過載時會瞬間反覆呼叫）
+    cooldown_max_min: 0.05      # 3 秒，不逐步加長
+    # 想要穩一點的設定（較少失敗、但可能等比較久）：
+    #   fallback_retries: 1, fallback_backoff_sec: 5, retries: 3, backoff_sec: [10, 20, 40],
+    #   cooldown_initial_sec: 60, cooldown_max_min: 10
   decision:
     model: gemini-decision-1
     rpm: 200
@@ -30,6 +33,17 @@ gemini:
     risk_threshold: 0.5         # 「點了會不會不可復原」的機率超過這個值就要使用者確認
     max_candidates: 60
     stall_steps: 2              # 畫面連續幾步沒變化就改交給代理人模型
+  completion_check:             # 模型說「完成了」之前，先用 Decisions API 看畫面確認，避免謊報成功
+    enabled: true
+    threshold: 0.5              # 「已完成」的機率低於這個值就退回給模型繼續做
+    max_rejections: 2           # 退回 2 次後模型仍堅持完成 → 任務判定失敗（不算成功）
+  reflex:                       # 反射層（遊戲模式）：代理人定規則，Decisions 每輪看畫面選規則、程式立刻按鍵
+    enabled: true
+    max_side: 512               # 送給 Decisions 的遊戲畫面長邊（越小越快、越省 token）
+    threshold: 0.5              # 信心低於這個值視同「沒有規則符合」
+    max_unknown: 3              # 連續幾輪沒有規則符合就交回代理人
+    stall_ticks: 6              # 遊戲畫面連續幾輪沒變化就交回代理人
+    max_iterations: 60          # 一次 set_reflex 最多跑幾輪
   enable_prompt_injection_detection: true
 
 browser:

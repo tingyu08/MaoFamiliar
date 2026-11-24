@@ -22,6 +22,7 @@ export const initialState: LiveState = {
   connection: "connecting",
   taskId: null,
   mode: null,
+  realtime: false,
   healing: null,
   target: null,
   instruction: null,
@@ -84,6 +85,7 @@ function applyEvent(state: LiveState, event: ServerEvent): LiveState {
         target: str(event.target),
         instruction: str(event.instruction),
         mode: event.mode === "replay" ? "replay" : "agent",
+        realtime: event.realtime === true,
         status: "running",
       };
     case "skill_heal":
@@ -144,6 +146,7 @@ function loadTask(state: LiveState, detail: TaskDetail): LiveState {
     ...state,
     taskId: detail.task.id,
     mode: detail.task.mode === "replay" ? "replay" : "agent",
+    realtime: detail.task.mode === "realtime",
     target: detail.task.target,
     instruction: detail.task.instruction,
     status: detail.task.status,

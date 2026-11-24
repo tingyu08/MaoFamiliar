@@ -354,6 +354,41 @@ sequenceDiagram
 
 暫停鍵和恢復鍵由使用者在知識庫中設定（例如 Minecraft 的暫停鍵和恢復鍵都是 `Esc`），也可以由 AI 從心得中建議。暫停時截圖不會傳給模型，因為傳出去的是暫停前那一張。
 
+### 5.2a 反射層（FR-670～676）
+
+代理人模型每步 3–10 秒，遊戲不會等它。反射層讓代理人把「看到什麼就按什麼」寫成規則（資料），由 Decisions 每輪約 1 秒照規則判斷，程式立刻按鍵。
+
+```mermaid
+sequenceDiagram
+    participant M as 代理人模型（慢）
+    participant A as AgentLoop
+    participant R as run_reflex
+    participant D as Decisions（快）
+    participant X as Executor
+
+    M-->>A: set_reflex(question, rules, iterations)
+    A->>R: 交給反射層
+    loop 每一輪（約 1 秒）
+        R->>X: screenshot() + focus_box()
+        R->>R: 裁出遊戲畫面，縮到 512px
+        R->>D: choice：各規則的 when + unknown
+        D-->>R: 選中的規則與信心
+        R->>X: 照規則 hold_keys／tap_keys／wait（經過安全檢查）
+        Note over R: 記成步驟（layer = reflex）
+    end
+    R-->>A: 統計：各規則次數、平均延遲、停止原因
+    A-->>M: function_result + 最新截圖
+```
+
+| 元件 | 檔案 | 職責 |
+|---|---|---|
+| `SetReflexArgs` | `backends/action_args.py` | 規則驗證（數量、代號、按鍵、秒數上限） |
+| `ReflexDecider` | `knowledge/reflex.py` | 組 `choice` 問題、裁切縮圖、呼叫 Decisions、低信心視同 `unknown` |
+| `run_reflex` | `core/reflex_step.py` | 反射迴圈、提前停止條件、統計回報 |
+| `AgentLoop` | `core/agent_loop.py` | 攔下 `set_reflex`，把每輪按鍵記成步驟；反射步數不計入 `max_steps` |
+
+提前停止：連續 3 輪 `unknown`（或信心不足）、遊戲畫面連續 6 輪沒變化、按鍵失敗、Decisions 出錯或額度用完、使用者按停止。免費額度每分鐘 5 萬 token；512px 的遊戲畫面約 600 token，每分鐘最多約 60–80 輪，ModelRouter 會照額度排隊。
+
 ### 5.3 技能重播與自我修復
 
 1. 確認目前狀態等於技能的起始狀態：瀏覽器檢查網址或 DOM，桌面用 Decisions API 判斷。

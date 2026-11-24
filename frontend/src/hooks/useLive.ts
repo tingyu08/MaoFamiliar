@@ -34,9 +34,9 @@ export function useLive(api: Api, token: string, socketUrl: string = defaultSock
   }, [api, token, socketUrl]);
 
   const start = useCallback(
-    async (url: string, instruction: string): Promise<boolean> => {
+    async (url: string, instruction: string, mode: "ui" | "realtime" = "ui"): Promise<boolean> => {
       try {
-        await api.createTask(url, instruction);
+        await api.createTask(url, instruction, mode);
         return true;
       } catch (error) {
         showNotice(error instanceof ApiError ? error.message : "建立任務失敗");

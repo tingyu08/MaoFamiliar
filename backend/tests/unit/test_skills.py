@@ -46,6 +46,12 @@ class TestBuildSteps:
         with pytest.raises(SkillBuildError, match=message):
             build_steps(task(), records)
 
+    def test_rejects_realtime_task(self):
+        from dataclasses import replace
+
+        with pytest.raises(SkillBuildError, match="遊戲模式"):
+            build_steps(replace(task(), mode="realtime"), [record(0, "click_element", ref="e1", locator=LOCATOR)])
+
     def test_rejects_failed_task(self):
         with pytest.raises(SkillBuildError, match="成功"):
             build_steps(task(TaskStatus.FAILED), [record(0, "click_element", ref="e1", locator=LOCATOR)])

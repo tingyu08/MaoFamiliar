@@ -67,8 +67,10 @@ def test_replay_heals_after_page_changes(tmp_path, page):
         form.write_text(changed, encoding="utf-8")
 
         replay(page)
-        expect(page.get_by_role("status")).to_contain_text("已點擊:小明")
+        # 先等重播開始，否則會比對到上一個任務留下的結果橫幅
+        expect(page.get_by_role("status")).to_contain_text("AI 正在接手修復")
         expect(page.get_by_role("status")).to_contain_text("第 2 版")
+        expect(page.get_by_role("status")).to_contain_text("已點擊:小明")
         steps = page.get_by_role("list", name="步驟紀錄")
         expect(steps.locator(".step-fail").first).to_contain_text("找不到「送出表單」")
         expect(page.get_by_role("region", name="技能")).to_contain_text("第 2 版")

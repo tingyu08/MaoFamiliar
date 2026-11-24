@@ -19,6 +19,8 @@ from demo_server import FRONTEND_DIST, ScriptedFormModel, start_demo  # noqa: E4
 pytestmark = pytest.mark.skipif(not (FRONTEND_DIST / "index.html").exists(), reason="前端尚未建置（npm run build）")
 
 TIMEOUT_MS = 30_000
+EXPECT_TIMEOUT_MS = 15_000  # expect() 預設只等 5 秒；加上完成檢查後一個任務約要 6 秒
+expect.set_options(timeout=EXPECT_TIMEOUT_MS)  # page.set_default_timeout 管不到 expect()
 
 
 class DailyQuotaError(Exception):

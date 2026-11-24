@@ -19,9 +19,10 @@ from familiar.api.context import ServerSettings, Services
 from familiar.backends.base import ActionBackend
 from familiar.backends.custom_fc import CustomFcBackend
 from familiar.backends.native_cu import NativeCuBackend
-from familiar.config import AppConfig, load_config, to_actor_config, to_router_config, to_safety_config
+from familiar.config import (AppConfig, load_config, to_actor_config, to_completion_config, to_reflex_config,
+                             to_router_config, to_safety_config)
 from familiar.core.agent_loop import AgentLoop
-from familiar.core.agent_types import LoopDeps
+from familiar.core.agent_types import LoopConfig, LoopDeps
 from familiar.core.events import EventBus
 from familiar.core.models import Environment
 from familiar.core.task_runner import TaskRunner
@@ -30,7 +31,9 @@ from familiar.gemini.interactions import AgentModelClient, GeminiInteractionsCli
 from familiar.gemini.model_router import ModelRouter
 from familiar.gemini.quota import pacific_date
 from familiar.gemini.decisions import DecisionClient, GeminiDecisionClient
+from familiar.knowledge.completion_check import CompletionChecker
 from familiar.knowledge.decision_actor import DecisionActor
+from familiar.knowledge.reflex import ReflexDecider
 from familiar.knowledge.replay import ReplayContext
 from familiar.knowledge.skill_store import SkillStore
 from familiar.storage.artifact_store import ArtifactStore
@@ -59,7 +62,7 @@ def make_backend(config: AppConfig) -> ActionBackend:
 
 
 def build_services(config: AppConfig, data_dir: Path, client: AgentModelClient, headless: bool = False,
-                   decisions: DecisionClient | None = None) -> Services:
+                   decisions: DecisionClient | None = None, loop_config: LoopConfig | None = None) -> Services:
     db = Database(data_dir / "familiar.db")
     repo = TaskRepository(db)
     quota_repo = QuotaRepository(db)
@@ -77,12 +80,14 @@ def build_services(config: AppConfig, data_dir: Path, client: AgentModelClient, 
         return BrowserExecutor(profile_dir=profile_dir, headless=headless)
 
     actor = DecisionActor(router, decisions, to_actor_config(config)) if decisions else None
+    completion = CompletionChecker(router, decisions, to_completion_config(config)) if decisions else None
+    reflex = ReflexDecider(router, decisions, to_reflex_config(config)) if decisions else None
 
     def loop_factory(executor, control, on_step, on_status) -> AgentLoop:
         deps = LoopDeps(router=router, client=client, backend=backend, executor=executor, events=events,
                         control=control, safety=safety, clock=utc_now, on_step=on_step, on_status=on_status,
-                        actor=actor)
-        return AgentLoop(deps)
+                        actor=actor, completion=completion, reflex=reflex)
+        return AgentLoop(deps, loop_config)
 
     skills = SkillStore(data_dir / "targets")
     runner = TaskRunner(repo, artifacts, events, executor_factory, loop_factory, clock=utc_now,

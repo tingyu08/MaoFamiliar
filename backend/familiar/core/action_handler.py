@@ -8,7 +8,7 @@ from typing import Any
 
 from familiar.core.agent_types import LoopConfig, LoopDeps, LoopResult, TaskSpec
 from familiar.core.events import make_event
-from familiar.core.models import Action, ActionKind, ActionOutcome, CallError, Environment
+from familiar.core.models import Action, ActionKind, ActionOutcome, CallError, Environment, thaw
 from familiar.core.safety import SafetyContext, SafetyResult, Verdict, evaluate
 from familiar.core.tasks import TaskStatus
 
@@ -25,10 +25,11 @@ class Handled:
     outcome: ActionOutcome
     finish: LoopResult | None = None
     locator: dict[str, Any] | None = None
+    decision_calls: int = 0
 
 
 def describe(action: Action) -> dict[str, Any]:
-    return {"kind": action.kind.value, "args": dict(action.args), "intent": action.intent,
+    return {"kind": action.kind.value, "args": thaw(action.args), "intent": action.intent,
             "risk": action.risk.value}
 
 
@@ -37,6 +38,7 @@ class ActionHandler:
         self._deps = deps
         self._config = config
         self._spec = spec
+        self._rejections = 0  # 完成檢查退回的次數（每個任務各自計算）
 
     async def handle(self, item: Action | CallError, info: dict[str, str], thumbnail: str, steps: int) -> Handled:
         if isinstance(item, CallError):
@@ -44,15 +46,43 @@ class ActionHandler:
         action = item
         if action.kind is ActionKind.TASK_DONE:
             summary = str(action.args.get("summary", ""))
-            return Handled(self._ok(action), LoopResult(TaskStatus.SUCCEEDED, text=summary, steps=steps))
+            finish, rejection, calls = await self.judge_completion(summary, steps)
+            if finish is None:
+                return Handled(self._error(action, rejection or ""), decision_calls=calls)
+            outcome = self._ok(action) if finish.status is TaskStatus.SUCCEEDED else self._error(action, finish.error or "")
+            return Handled(outcome, finish, decision_calls=calls)
         if action.kind is ActionKind.ASK_USER:
             return await self._ask_user(action, steps)
         if action.kind in PLANNING_KINDS:
             await self._deps.events.emit(make_event("plan_updated", task_id=self._spec.task_id, **describe(action)))
             return Handled(self._ok(action))
+        if action.kind is ActionKind.SET_REFLEX:  # 有啟用時由代理人迴圈處理，走到這裡表示停用
+            return Handled(self._error(action, "反射層未啟用，請改用 hold_keys／tap_keys 操作"))
         if action.kind in KNOWLEDGE_KINDS:
             return Handled(self._error(action, "知識庫功能尚未啟用，請繼續用其他動作完成任務"))
         return await self._execute(action, info, thumbnail, steps)
+
+    async def judge_completion(self, summary: str, steps: int) -> tuple[LoopResult | None, str | None, int]:
+        """模型說完成時先看畫面確認（FR-605）。
+
+        回傳 (結束結果, 退回訊息, Decisions 次數)：通過 → 成功；沒通過 → 退回給模型繼續；
+        退回超過上限仍堅持完成 → 判定失敗，不謊報成功。
+        """
+        checker = self._deps.completion
+        if checker is None:
+            return LoopResult(TaskStatus.SUCCEEDED, text=summary, steps=steps), None, 0
+        shot = await self._deps.executor.screenshot()
+        verdict = await checker.verify(shot.png, self._spec.instruction, summary)
+        if verdict.done:
+            return LoopResult(TaskStatus.SUCCEEDED, text=summary, steps=steps), None, verdict.decision_calls
+        self._rejections += 1
+        if self._rejections > checker.config.max_rejections:
+            error = (f"AI 回報已完成，但畫面檢查 {self._rejections} 次都判斷還沒完成，所以不算成功。"
+                     f"AI 的說法：{summary}")
+            return LoopResult(TaskStatus.FAILED, error=error, steps=steps), None, verdict.decision_calls
+        message = (f"完成檢查：從目前畫面看，任務還沒完成（完成機率 {verdict.probability or 0:.2f}）。"
+                   "請繼續操作；如果真的已經完成，請在 summary 說明畫面上哪裡看得出來。")
+        return None, message, verdict.decision_calls
 
     def _ok(self, action: Action, message: str = "", **data: Any) -> ActionOutcome:
         return ActionOutcome(action.call_id, action.kind.value, ok=True, message=message, data=data)

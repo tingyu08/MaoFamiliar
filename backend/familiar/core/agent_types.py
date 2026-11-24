@@ -7,7 +7,9 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 if TYPE_CHECKING:
+    from familiar.knowledge.completion_check import CompletionChecker
     from familiar.knowledge.decision_actor import DecisionActor
+    from familiar.knowledge.reflex import ReflexDecider
 
 from familiar.backends.base import ActionBackend
 from familiar.core.control import TaskControl
@@ -27,6 +29,7 @@ class LoopConfig:
     confirm_timeout_sec: float = 300
     stuck_warn_steps: int = 5
     stuck_stop_steps: int = 8
+    repeat_warn_actions: int = 4  # 連續做同樣的動作幾次就提醒模型換做法（畫面有小變化時卡住偵測抓不到）
     compress_after_steps: int = 20
     model_screenshot_max_side: int = 1280
     est_tokens_per_turn: int = 2500
@@ -83,3 +86,5 @@ class LoopDeps:
     on_step: Callable[[StepInfo], Awaitable[None]]
     on_status: Callable[[TaskStatus], Awaitable[None]]
     actor: "DecisionActor | None" = None  # 第 3 層；None 表示停用
+    completion: "CompletionChecker | None" = None  # 完成檢查；None 表示停用
+    reflex: "ReflexDecider | None" = None  # 反射層（遊戲模式的 set_reflex）；None 表示停用

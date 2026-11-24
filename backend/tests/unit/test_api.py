@@ -72,7 +72,17 @@ def test_full_task_flow(tmp_path):
         assert client.get(f"/api/tasks/{task_id}/steps/9/screenshot", headers=AUTH).status_code == 404
 
 
+def test_realtime_mode_flag(tmp_path):
+    client, env = build(tmp_path, ScriptedClient(turn(text="ok")))
+    with client:
+        created = client.post("/api/tasks", json={"url": URL, "instruction": "玩遊戲", "mode": "realtime"},
+                              headers=AUTH).json()["data"]
+        assert created["mode"] == "realtime"
+        wait_final(client, created["id"])
+
+
 @pytest.mark.parametrize("body,status", [
+    ({"url": URL, "instruction": "a", "mode": "turbo"}, 422),
     ({"url": "javascript:x", "instruction": "a"}, 400),
     ({"url": URL}, 422),
     ({"url": URL, "instruction": "a", "extra": 1}, 422),

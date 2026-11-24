@@ -118,6 +118,11 @@ describe("liveReducer", () => {
     expect(run([started], healing).healing).toBeNull();
   });
 
+  it("tracks game mode", () => {
+    expect(run([{ ...started, realtime: true }]).realtime).toBe(true);
+    expect(run([started]).realtime).toBe(false);
+  });
+
   it("tracks connection state", () => {
     expect(liveReducer(initialState, { type: "connection", value: "open" }).connection).toBe("open");
   });

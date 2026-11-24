@@ -20,7 +20,9 @@ from familiar.executors.base import ExecResult, Screenshot
 from familiar.executors.elements import Element, ElementTable
 from familiar.gemini.decisions import Answer, DecisionResult
 from familiar.gemini.interactions import AgentTurn
+from familiar.knowledge.completion_check import CompletionChecker
 from familiar.knowledge.decision_actor import DecisionActor
+from familiar.knowledge.reflex import ReflexConfig, ReflexDecider
 from familiar.gemini.model_router import ModelRouter, Role, RouterConfig
 
 SPEC = TaskSpec(task_id="t1", instruction="送出表單", environment=Environment.BROWSER)
@@ -56,6 +58,7 @@ class FakeExecutor:
         self.element_list = elements
         self.css_refs = css_refs or {}
         self.failing_kinds = failing_kinds
+        self.focus: dict[str, int] | None = None
         self.executed: list[Action] = []
         self.started: list[str] = []
         self._shots = 0
@@ -87,6 +90,13 @@ class FakeExecutor:
 
     async def ref_for_css(self, css: str) -> str | None:
         return self.css_refs.get(css)
+
+    async def focus_box(self) -> dict[str, int] | None:
+        return self.focus
+
+    async def reveal_focus(self) -> bool:
+        self.revealed = getattr(self, "revealed", 0) + 1
+        return False
 
     async def element_at(self, x: float, y: float) -> dict[str, Any] | None:
         hit = next((e for e in self.element_list if e.x1 <= x <= e.x2 and e.y1 <= y <= e.y2), None)
@@ -138,7 +148,8 @@ class RecordingSink:
 class Harness:
     def __init__(self, client: ScriptedClient, executor: FakeExecutor | None = None,
                  config: LoopConfig | None = None, chain=("lite", "flash"),
-                 on_event: Callable[[dict[str, Any]], None] | None = None, decisions: Any = None):
+                 on_event: Callable[[dict[str, Any]], None] | None = None, decisions: Any = None,
+                 completion: Any = None, reflex: Any = None, reflex_config: ReflexConfig | None = None):
         self.client = client
         self.executor = executor or FakeExecutor()
         self.control = TaskControl()
@@ -152,10 +163,12 @@ class Harness:
         router = ModelRouter(RouterConfig(chains={Role.ACTION: chain, Role.DECISION: ("decision-1",)}),
                              clock=lambda: datetime.now(UTC), sleep=no_sleep)
         actor = DecisionActor(router, decisions) if decisions is not None else None
+        checker = CompletionChecker(router, completion) if completion is not None else None
+        decider = ReflexDecider(router, reflex, reflex_config) if reflex is not None else None
         deps = LoopDeps(router=router, client=client, backend=CustomFcBackend(), executor=self.executor,
                         events=self.sink, control=self.control, safety=SafetyConfig(),
                         clock=lambda: datetime.now(UTC), on_step=self._on_step, on_status=self._on_status,
-                        actor=actor)
+                        actor=actor, completion=checker, reflex=decider)
         self.loop = AgentLoop(deps, config or LoopConfig())
 
     async def _on_step(self, info: StepInfo) -> None:
@@ -164,8 +177,8 @@ class Harness:
     async def _on_status(self, status: TaskStatus) -> None:
         self.statuses.append(status)
 
-    async def run(self):
-        return await self.loop.run(SPEC)
+    async def run(self, spec: TaskSpec = SPEC):
+        return await self.loop.run(spec)
 
 
 class ScriptedDecisions:

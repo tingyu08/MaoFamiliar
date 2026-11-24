@@ -33,6 +33,10 @@ const KIND_LABEL: Record<string, string> = {
   save_note: "記下心得",
   use_skill: "使用技能",
   request_mode: "建議切換模式",
+  hold_keys: "按住按鍵",
+  tap_keys: "連按按鍵",
+  hold_mouse: "按住滑鼠",
+  set_reflex: "交給反射層",
 };
 
 export const kindLabel = (kind: string): string => KIND_LABEL[kind] ?? kind;
@@ -49,6 +53,12 @@ function detail(action: ActionInfo): string {
       return typeof a.text === "string" ? `「${a.text}」` : "";
     case "press_keys":
       return Array.isArray(a.keys) ? a.keys.join(" + ") : "";
+    case "hold_keys":
+      return Array.isArray(a.keys) ? `${a.keys.join(" + ")} ${a.seconds ?? ""} 秒` : "";
+    case "tap_keys":
+      return Array.isArray(a.keys) ? `${a.keys.join(" + ")} ×${a.times ?? 1}` : "";
+    case "set_reflex":
+      return Array.isArray(a.rules) ? `${a.rules.length} 條規則，${a.iterations ?? 20} 輪` : "";
     case "navigate":
       return String(a.url ?? "");
     case "scroll":

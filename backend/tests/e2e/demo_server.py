@@ -106,6 +106,8 @@ class FormDecisions:
 
         self.calls += 1
         key, question = next(iter(questions.items()))
+        if key == "done":  # 完成檢查：劇本裡回報完成時表單確實已經送出
+            return DecisionResult({key: Answer("noul", probability=0.95, confidence=0.95)}, tokens_in=1000)
         if question["type"] == "noul":
             probability = 0.9 if self.risky else 0.1
             return DecisionResult({key: Answer("noul", probability=probability, confidence=0.9)}, tokens_in=1000)

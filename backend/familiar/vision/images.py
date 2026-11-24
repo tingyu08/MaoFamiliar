@@ -47,6 +47,18 @@ def unchanged_streak(hashes: tuple[str, ...]) -> int:
     return streak
 
 
+def crop_png(png: bytes, box: dict[str, float]) -> bytes:
+    """裁出指定區域（例如網頁裡的遊戲畫面）。"""
+    image = _open(png)
+    left, top = max(0, int(box["x1"])), max(0, int(box["y1"]))
+    right, bottom = min(image.width, int(box["x2"])), min(image.height, int(box["y2"]))
+    if right - left < 2 or bottom - top < 2:
+        return png
+    buffer = io.BytesIO()
+    image.crop((left, top, right, bottom)).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
 def thumbnail_b64(png: bytes, width: int = THUMB_WIDTH) -> str:
     image = _open(png).convert("RGB")
     height = max(1, round(image.height * width / image.width))

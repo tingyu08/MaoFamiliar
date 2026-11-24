@@ -38,6 +38,7 @@ class ActionKind(StrEnum):
     LOOK = "look"
     HOLD_MOUSE = "hold_mouse"
     TAP_KEYS = "tap_keys"
+    SET_REFLEX = "set_reflex"  # 把快速反應交給反射層（Decisions 看畫面 → 照規則按鍵）
     # 瀏覽器
     NAVIGATE = "navigate"
     GO_BACK = "go_back"
@@ -73,6 +74,15 @@ def _freeze(value: Any) -> Any:
         return MappingProxyType({k: _freeze(v) for k, v in value.items()})
     if isinstance(value, (list, tuple)):
         return tuple(_freeze(v) for v in value)
+    return value
+
+
+def thaw(value: Any) -> Any:
+    """_freeze 的反向：轉回一般 dict／list（新物件），給 JSON 序列化用。"""
+    if isinstance(value, Mapping):
+        return {k: thaw(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [thaw(v) for v in value]
     return value
 
 

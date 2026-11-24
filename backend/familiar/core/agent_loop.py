@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from dataclasses import dataclass, replace
@@ -12,14 +13,15 @@ from familiar.core.actor_step import try_actor
 from familiar.executors.elements import ElementTable
 from familiar.core.agent_types import LoopConfig, LoopDeps, LoopResult, StepInfo, TaskSpec
 from familiar.core.events import make_event
-from familiar.core.models import Action, ActionOutcome, CallError
-from familiar.core.prompts import SYSTEM_INSTRUCTION, fresh_input
+from familiar.core.models import Action, ActionKind, ActionOutcome, CallError, OperatingMode, thaw
+from familiar.core.prompts import fresh_input, system_instruction_for
+from familiar.core.reflex_step import ReflexTick, TickSink, run_reflex
 from familiar.core.tasks import TaskStatus
 from familiar.executors.base import Screenshot
 from familiar.gemini.errors import ErrorKind, classify
 from familiar.gemini.interactions import AgentTurn
 from familiar.gemini.model_router import NoModelAvailable, Role
-from familiar.vision.images import dhash, downscale_png, thumbnail_b64, unchanged_streak
+from familiar.vision.images import crop_png, dhash, downscale_png, thumbnail_b64, unchanged_streak
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +30,8 @@ FRIENDLY_ERRORS = {
     ErrorKind.BAD_REQUEST: "送給模型的請求格式有誤（詳細內容請看後端日誌）",
 }
 STUCK_NOTE = "最近幾步畫面幾乎沒有變化，請換一種做法，或呼叫 ask_user。"
+REPEAT_NOTE = ("你已經連續 {count} 次做一模一樣的動作（{label}）。如果沒有進展，請仔細看畫面上的提示"
+               "（文字、箭頭、按鍵圖示，例如「↑ JUMP」表示要按上鍵跳），換一種做法。")
 
 
 @dataclass(frozen=True)
@@ -72,15 +76,18 @@ class AgentLoop:
         failures = 0
         carry_calls = 0  # 第 3 層用掉、還沒記到步驟上的 Decisions 次數
         last_was_actor = False
+        reflex_steps = 0  # 反射層按鍵的步數不算進 max_steps（那是給代理人與第 3 層的上限）
+        recent: tuple[tuple[str, str], ...] = ()  # 代理人最近的動作（簽章, 說明），偵測一直重複同一個動作
 
         while True:
-            stop = self._limit_reached(spec, steps, started)
+            stop = self._limit_reached(spec, steps - reflex_steps, started)
             if stop:
                 return stop
-            observation = await self._observe(hashes)
+            observation = await self._observe(hashes, realtime=spec.mode is OperatingMode.REALTIME)
             hashes = (*hashes, observation.phash)
             if unchanged_streak(hashes) >= config.stuck_stop_steps:
                 return LoopResult(TaskStatus.FAILED, error="畫面連續多步沒有變化，任務停止", steps=steps)
+            observation = _with_repeat_note(observation, recent, config.repeat_warn_actions)
 
             attempt = await try_actor(deps, handler, spec, observation.shot, observation.table, observation.info,
                                       observation.thumbnail, history, hashes, steps + 1, last_was_actor)
@@ -123,19 +130,34 @@ class AgentLoop:
             conversation = Conversation(routed.model, turn.interaction_id,
                                         conversation.started_step if continued else steps)
             await deps.events.emit(make_event("quota_update", model=routed.model, quota=deps.router.snapshot()))
-            if not turn.function_calls:
-                return LoopResult(TaskStatus.SUCCEEDED, text=turn.text or "任務完成", steps=steps)
+            if not turn.function_calls:  # 模型直接用文字回答，視同回報完成，也要經過完成檢查
+                summary = turn.text or "任務完成"
+                finish, rejection, calls = await handler.judge_completion(summary, steps)
+                if finish is not None:
+                    return replace(finish, steps=steps)
+                carry_calls += calls
+                history = (*history, f"回報完成「{summary[:80]}」→ {rejection}")
+                conversation, pending = Conversation(), ()  # 開新對話，讓模型從歷史看到被退回的原因
+                continue
 
             outcomes: list[ActionOutcome] = []
             for position, item in enumerate(deps.backend.parse(turn.function_calls, observation.shot.frame)):
                 began = time.perf_counter()
-                handled = await handler.handle(item, observation.info, observation.thumbnail, steps + 1)
+                if _is_reflex(item) and deps.reflex is not None and deps.reflex.config.enabled:
+                    run = await run_reflex(deps, handler, item, observation.info, steps,
+                                           self._tick_recorder(spec, observation))
+                    steps += run.ticks
+                    reflex_steps += run.ticks
+                    handled = run.handled
+                else:
+                    handled = await handler.handle(item, observation.info, observation.thumbnail, steps + 1)
                 steps += 1
+                recent = (*recent, _signature(item))[-20:]
                 outcomes.append(handled.outcome)
                 history = (*history, _history_line(item, handled.outcome))
                 await self._record(spec, steps - 1, routed.model, item, handled, observation,
                                    turn if position == 0 else None, int((time.perf_counter() - began) * 1000),
-                                   decision_calls=carry_calls if position == 0 else 0)
+                                   decision_calls=handled.decision_calls + (carry_calls if position == 0 else 0))
                 carry_calls = 0 if position == 0 else carry_calls
                 if handled.finish:
                     return replace(handled.finish, steps=steps)
@@ -151,11 +173,13 @@ class AgentLoop:
             return LoopResult(TaskStatus.FAILED, error=f"超過時間上限（{self._config.max_minutes:g} 分鐘）", steps=steps)
         return None
 
-    async def _observe(self, hashes: tuple[str, ...]) -> Observation:
+    async def _observe(self, hashes: tuple[str, ...], realtime: bool = False) -> Observation:
         executor = self._deps.executor
         shot = await executor.screenshot()
         table = await executor.elements()
-        phash = dhash(shot.png)
+        # 遊戲模式：卡住偵測只看遊戲畫面那一塊；整頁的雜湊會被不動的網站框架與廣告主導
+        focus = await executor.focus_box() if realtime else None
+        phash = dhash(crop_png(shot.png, focus) if focus else shot.png)
         streak = unchanged_streak((*hashes, phash))
         return Observation(
             shot=shot,
@@ -188,7 +212,9 @@ class AgentLoop:
             last = replace(pending[-1], data={**pending[-1].data, **context}, screenshot_png=observation.model_png)
             payload = self._deps.backend.build_results((*pending[:-1], last))
             previous = conversation.interaction_id
-        turn = await self._deps.client.create_turn(model=model, system_instruction=SYSTEM_INSTRUCTION,
+        turn = await self._deps.client.create_turn(model=model,
+                                                   system_instruction=system_instruction_for(
+                                                       spec.mode is OperatingMode.REALTIME),
                                                    input=payload, tools=tools, previous_interaction_id=previous)
         return turn, not fresh_needed
 
@@ -203,6 +229,13 @@ class AgentLoop:
         if not stopped:
             await deps.on_status(TaskStatus.RUNNING)
         return stopped
+
+    def _tick_recorder(self, spec: TaskSpec, observation: Observation) -> TickSink:
+        async def record(tick: ReflexTick) -> None:
+            seen = replace(observation, shot=tick.shot, phash=tick.phash, thumbnail=tick.thumbnail, note=None)
+            await self._record(spec, tick.index, tick.model, tick.action, tick.handled, seen, None,
+                               tick.duration_ms, layer="reflex", decision_calls=1)
+        return record
 
     async def _record(self, spec: TaskSpec, index: int, model: str, item: Action | CallError,
                       handled: Handled, observation: Observation, turn: AgentTurn | None,
@@ -224,6 +257,41 @@ class AgentLoop:
             ok=outcome.ok, message=outcome.message, thumbnail=observation.thumbnail))
 
 
+def _signature(item: Action | CallError) -> tuple[str, str]:
+    """(比對用的簽章, 給模型看的說明)：種類＋參數相同就算同一個動作。"""
+    if isinstance(item, CallError):
+        return f"error:{item.name}", item.name
+    args = json.dumps(thaw(item.args), sort_keys=True, ensure_ascii=False)
+    return f"{item.kind.value}:{args}", f"{item.kind.value} {args}"
+
+
+def trailing_repeats(recent: tuple[tuple[str, str], ...]) -> int:
+    """最後一個動作連續出現幾次。"""
+    if not recent:
+        return 0
+    last = recent[-1][0]
+    count = 0
+    for signature, _ in reversed(recent):
+        if signature != last:
+            break
+        count += 1
+    return count
+
+
+def _with_repeat_note(observation: Observation, recent: tuple[tuple[str, str], ...], warn_at: int) -> Observation:
+    count = trailing_repeats(recent)
+    if count < warn_at:
+        return observation
+    note = REPEAT_NOTE.format(count=count, label=recent[-1][1])
+    return replace(observation, note=f"{observation.note}\n{note}" if observation.note else note)
+
+
+def _is_reflex(item: Action | CallError) -> bool:
+    return isinstance(item, Action) and item.kind is ActionKind.SET_REFLEX
+
+
 def _history_line(item: Action | CallError, outcome: ActionOutcome) -> str:
     label = (item.intent or item.kind.value) if isinstance(item, Action) else item.name
+    if outcome.ok and _is_reflex(item):  # 反射層的統計要留在歷史裡，開新對話時代理人才看得到
+        return f"{label} → {outcome.message[:300]}"
     return f"{label} → {'成功' if outcome.ok else '失敗：' + outcome.message}"

@@ -15,6 +15,24 @@ def result_payload(request, index=-1):
     return step, json.loads(step["result"][0]["text"])
 
 
+async def test_repeating_the_same_action_warns_the_model():
+    hold = lambda cid: call("hold_keys", cid, keys=["arrowright"], seconds=2)  # noqa: E731
+    script = [turn(hold(f"h{i}"), interaction_id=f"i{i}") for i in range(5)]
+    h = Harness(ScriptedClient(*script, turn(call("task_done", "d", summary="完成"))), config=LoopConfig(repeat_warn_actions=4))
+    await h.run()
+    notes = [result_payload(r)[1].get("note", "") for r in h.client.requests[1:]]
+    assert ["連續" in n for n in notes] == [False, False, False, True, True]
+    assert "連續 4 次" in notes[3] and "hold_keys" in notes[3] and "連續 5 次" in notes[4]
+
+
+async def test_different_actions_do_not_warn():
+    script = [turn(call("hold_keys", f"h{i}", keys=["arrowright" if i % 2 else "arrowup"], seconds=1),
+                   interaction_id=f"i{i}") for i in range(5)]
+    h = Harness(ScriptedClient(*script, turn(call("task_done", "d", summary="完成"))))
+    await h.run()
+    assert all("連續" not in result_payload(r)[1].get("note", "") for r in h.client.requests[1:])
+
+
 async def test_no_function_calls_means_done():
     h = Harness(ScriptedClient(turn(text="公告標題是 X")))
     result = await h.run()
@@ -170,6 +188,35 @@ async def test_long_conversation_is_compressed():
                 config=LoopConfig(compress_after_steps=1))
     await h.run()
     assert h.client.requests[1]["previous"] is None
+
+
+async def test_realtime_mode_uses_game_area_and_guide():
+    from dataclasses import replace
+
+    from agent_fakes import SPEC
+
+    from familiar.core.models import OperatingMode
+
+    clicks = [turn(call("hold_keys", f"c{i}", keys=["right"], seconds=0.5)) for i in range(10)]
+    h = Harness(ScriptedClient(*clicks), config=LoopConfig(stuck_warn_steps=2, stuck_stop_steps=3))
+    h.executor.focus = {"x1": 0, "y1": 0, "x2": 320, "y2": 15}  # 遊戲區域：整頁在動，但這一塊沒變
+    result = await h.loop.run(replace(SPEC, mode=OperatingMode.REALTIME))
+    assert result.status is TaskStatus.FAILED and "沒有變化" in result.error
+    assert h.executor.executed[0].kind is ActionKind.HOLD_KEYS
+
+
+async def test_ui_mode_ignores_game_area():
+    h = Harness(ScriptedClient(turn(call("click", x=1, y=1)), turn(text="ok")),
+                config=LoopConfig(stuck_warn_steps=2, stuck_stop_steps=3))
+    h.executor.focus = {"x1": 0, "y1": 0, "x2": 320, "y2": 15}
+    assert (await h.run()).status is TaskStatus.SUCCEEDED
+
+
+def test_realtime_guide_only_in_game_mode():
+    from familiar.core.prompts import system_instruction_for
+
+    assert "hold_keys" in system_instruction_for(True)
+    assert "hold_keys" not in system_instruction_for(False)
 
 
 async def test_planning_and_knowledge_actions():

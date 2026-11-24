@@ -56,7 +56,7 @@ export function TaskDetailView({ api, taskId, onBack, onSkillSaved }: Props) {
           {(task.result_text || task.error_message) && (
             <div className={`banner ${task.status === "succeeded" ? "banner-ok" : "banner-error"}`}>
               <p>{task.result_text ?? task.error_message}</p>
-              {task.status === "succeeded" && task.mode !== "replay" && (
+              {task.status === "succeeded" && task.mode === "browser" && (
                 <div className="banner-actions">
                   <SaveSkillForm api={api} taskId={task.id} defaultName={task.instruction} onSaved={onSkillSaved} />
                 </div>

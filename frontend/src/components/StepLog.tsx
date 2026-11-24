@@ -1,10 +1,11 @@
 import { describeAction, shortModel } from "../lib/format";
 import type { StepView } from "../state/types";
 
-/** 這一步由哪一層處理：重播（不用 AI）、第 3 層（Decisions）、代理人模型。 */
+/** 這一步由哪一層處理：重播（不用 AI）、第 3 層（Decisions）、反射層（Decisions 照規則按鍵）、代理人模型。 */
 function LayerLabel({ step }: { step: StepView }) {
   if (step.layer === "skill") return <span className="layer layer-skill">重播</span>;
   if (step.layer === "actor") return <span className="layer layer-actor">Decisions</span>;
+  if (step.layer === "reflex") return <span className="layer layer-reflex">反射</span>;
   return <span className="mono">{shortModel(step.model)}</span>;
 }
 
@@ -25,6 +26,9 @@ export function StepLog({ steps, screenshotUrl }: { steps: StepView[]; screensho
               <div className="step-detail">{detail}</div>
               {!step.ok && step.message && <div className="step-error">{step.message}</div>}
               {step.ok && step.layer === "skill" && step.message && <div className="step-detail">{step.message}</div>}
+              {step.ok && step.action.kind === "set_reflex" && step.message && (
+                <div className="step-detail">{step.message}</div>
+              )}
             </div>
             <div className="step-meta">
               <LayerLabel step={step} />

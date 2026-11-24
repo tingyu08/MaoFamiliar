@@ -23,7 +23,7 @@ export function App({ token }: { token: string }) {
   const refreshKey = `${state.taskId}:${state.status}`;
   const onSkillSaved = () => setSkillsVersion((v) => v + 1);
 
-  const canSave = state.taskId && state.result?.status === "succeeded" && state.mode === "agent";
+  const canSave = state.taskId && state.result?.status === "succeeded" && state.mode === "agent" && !state.realtime;
   const resultActions = canSave ? (
     <SaveSkillForm key={state.taskId} api={api} taskId={state.taskId!} defaultName={state.instruction ?? ""}
       onSaved={onSkillSaved} />
@@ -50,9 +50,9 @@ export function App({ token }: { token: string }) {
 
       <main className="layout">
         <aside className="side">
-          <NewTaskForm busy={busy} onStart={async (url, instruction) => {
+          <NewTaskForm busy={busy} onStart={async (url, instruction, mode) => {
             setViewing(null);
-            return start(url, instruction);
+            return start(url, instruction, mode);
           }} />
           <SkillsPanel api={api} busy={busy} refreshKey={`${refreshKey}:${skillsVersion}`} onError={showNotice}
             onRun={async (skillId) => {
