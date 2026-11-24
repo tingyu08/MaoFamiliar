@@ -41,3 +41,4 @@ class TaskRecord:
     skill_steps: int = 0
     actor_steps: int = 0
     finished_at: datetime | None = None
+    skill_id: str | None = None

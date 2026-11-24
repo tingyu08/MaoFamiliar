@@ -357,7 +357,7 @@ sequenceDiagram
 ### 5.3 技能重播與自我修復
 
 1. 確認目前狀態等於技能的起始狀態：瀏覽器檢查網址或 DOM，桌面用 Decisions API 判斷。
-2. 逐步執行：依 FR-403 的定位鏈尋找目標，執行後確認畫面已到達預期狀態。
+2. 逐步執行：依 FR-403 的定位鏈尋找目標，執行後確認畫面已到達預期狀態（P1 實作：錄製時若這一步之後網址有變，重播後要在 3 秒內到達同一個網址路徑）。每一步仍經過安全規則，錄製時是高風險的步驟，重播時一樣要使用者確認。
 3. 任一步驟定位失敗或狀態不符時，重試 1 次，仍然失敗就交給 AgentLoop，並附上「技能名稱、已完成的步驟、剩下的步驟說明」。
 4. AgentLoop 完成後，Learner 把「前段成功的步驟加上 AI 新做的步驟」合併成技能的新版本。
 
@@ -374,15 +374,17 @@ sequenceDiagram
 | GET | `/targets`、`/targets/{id}` | 知識庫清單、詳情 |
 | PATCH | `/targets/{id}` | 更新操作模式、暫停鍵、使用者說明 |
 | DELETE | `/targets/{id}/states/{sid}`、`/targets/{id}/skills/{kid}`、`/targets/{id}/notes/{nid}` | 刪除知識 |
-| POST | `/targets/{id}/skills` | 把任務片段存成技能：`{task_id, from_step, to_step, name}` |
-| POST | `/targets/{id}/skills/{kid}/run` | 單獨執行某個技能 |
+| POST | `/skills` | 把成功的任務存成技能：`{task_id, name}`（P1 第 4 週實作；P2 再加 `from_step`、`to_step` 存片段） |
+| GET | `/skills`、`/skills/{kid}` | 技能清單、技能詳情（含目前版本的步驟） |
+| POST | `/skills/{kid}/run` | 重播技能（建立 `mode=replay` 的任務） |
+| DELETE | `/skills/{kid}` | 刪除技能 |
 | GET | `/targets/{id}/export`、POST `/targets/import` | 匯出或匯入知識庫 zip |
 | GET | `/quota` | 各模型今日用量與上限 |
 | GET/POST/DELETE | `/schedules` | 排程（P4） |
 
 ### 5.5 WebSocket 事件
 
-連線後第一個訊息必須是 `{"type": "auth", "token": "..."}`。
+連線後第一個訊息必須是 `{"type": "auth", "token": "..."}`。驗證通過後，後端先送 `hello`：`current_task_id` 與 `pending`（還沒處理的 `confirm_request`／`user_help_request`／`waiting_quota`），讓重新整理或斷線重連的前端能補看到確認窗（第 3 週新增）。
 
 | 方向 | type | 內容 |
 |---|---|---|
@@ -396,6 +398,7 @@ sequenceDiagram
 | | `user_help_request` | `request_id`、原因 |
 | | `waiting_quota` | 預計恢復時間 |
 | | `task_finished` | 狀態、結果、統計、建議存成的技能 |
+| | `skill_heal` | 技能重播失敗、交給代理人修復：`failed_step`、`reason`（第 4 週） |
 | 前端 → 後端 | `confirm_response` | `request_id`、`approved` |
 | | `user_help_done` | `request_id` |
 | | `stop` | `task_id` |
@@ -426,6 +429,7 @@ CREATE TABLE steps (
     action_json TEXT NOT NULL, locator_json TEXT, result_json TEXT NOT NULL,
     state_id TEXT, state_confidence REAL,
     screenshot_path TEXT NOT NULL, phash TEXT NOT NULL,
+    locator_json TEXT, page_url TEXT,   -- 第 4 週：技能錄製用的元素定位（role、名稱、CSS、座標）與動作前網址
     duration_ms INTEGER NOT NULL, tokens_in INTEGER DEFAULT 0, tokens_out INTEGER DEFAULT 0,
     PRIMARY KEY (task_id, idx)
 );
@@ -569,8 +573,8 @@ Familiar/
 | 影像 | Pillow、`imagehash`、OpenCV | 縮圖、感知雜湊、圖塊比對 |
 | 資料庫 | SQLite（`aiosqlite`） | 單人、本機 |
 | 前端 | React + Vite + TypeScript | 建置成靜態檔案，由後端直接提供 |
-| 套件管理 | `uv`、`pnpm` | |
-| 測試 | pytest、pytest-asyncio、pytest-cov、Vitest、Playwright Test、pygame（假遊戲） | |
+| 套件管理 | `uv`、`npm` | 原訂 pnpm；開發機只有 Node 內建的 npm，改用 npm 減少安裝步驟 |
+| 測試 | pytest、pytest-asyncio、pytest-cov、pytest-timeout、Vitest、Testing Library、Python Playwright（E2E）、pygame（假遊戲） | E2E 改用 Python Playwright，與後端共用已安裝的 Chromium，不必另外下載 |
 
 ---
 
@@ -676,7 +680,7 @@ server:
 | 整合 | 選候選 | 用假的 Decisions 客戶端回傳指定選項，驗證點擊位置、`none` 時交給第 4 層、高風險時要求確認 |
 | 整合 | 自我修復 | 修改測試頁面或假遊戲的按鈕位置，驗證技能重播失敗時會交給 AI，並產生新版本 |
 | 整合 | REST + WebSocket | FastAPI TestClient；驗證 token、Origin、事件順序 |
-| E2E | 前端完整流程 | Playwright Test：建立任務 → 看到步驟 → 確認窗 → 完成 → 存成技能 → 重播 |
+| E2E | 前端完整流程 | `backend/tests/e2e/`：示範伺服器（真後端＋建置好的前端＋照劇本回應的假模型）＋ Python Playwright 扮演使用者：建立任務 → 看到步驟 → 確認窗 → 完成；之後加上存成技能 → 重播 |
 | 真實 API | 冒煙測試 | `@pytest.mark.live`，預設不執行，會消耗免費額度 |
 
 覆蓋率 ≥ 80%，依 TDD 流程開發。
@@ -690,8 +694,8 @@ server:
 | **0** ✅ | **技術驗證**（已完成，見 [spike-report.md](spike-report.md)） | 預設 `custom_fc`、依工作分工、新增第 3 層選候選 |
 | 1 | `core/models`、兩種後端的解析、ModelRouter、配額（含 Decisions 的每分鐘 token）、Safety | 單元測試通過 |
 | 2 | BrowserExecutor、AgentLoop、TaskRunner、REST、WebSocket | 用假的 Gemini 客戶端跑完網頁任務 |
-| 3 | 前端：任務、即時畫面、確認窗、配額顯示 | E2E 跑通 UC1、UC7、UC8 |
-| 4 | 技能錄製、重播與自我修復（瀏覽器）；第 3 層選候選（`DomCandidates` + 編號標記） | E2E 跑通技能重播；網頁任務中第 3 層處理的步數 > 0 |
+| 3 ✅ | 前端：任務、即時畫面、確認窗、求助、配額顯示、歷史 | E2E 跑通 UC1、UC7、UC8（已完成） |
+| 4 ✅ | 技能錄製、重播與自我修復（瀏覽器）；第 3 層選候選（`DomCandidates` + 編號標記） | E2E 跑通技能重播、網頁改版後自我修復；網頁任務中第 3 層處理的步數 > 0（已完成） |
 | 5–6 | P2：DesktopExecutor（UI 模式）、知識庫、Learner、DecisionRouter、Planner；`OcrCandidates`、`ShapeCandidates`、`GridLocator`；用崩鐵國際服真實截圖重測選候選 | 假遊戲的學習測試通過；實際試跑崩鐵 UC2、UC3 |
 | 7–8 | P3：即時模式、思考時暫停、視角校正 | 假遊戲的即時測試通過；實際試跑 Minecraft UC6 |
 | 9+ | P4：排程、通知 | UC10 |

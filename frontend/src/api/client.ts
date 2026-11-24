@@ -1,6 +1,6 @@
 // REST 客戶端：統一處理 token 與回應格式 {success, data, error, meta}
 
-import type { QuotaMap, TaskDetail, TaskRecord } from "../state/types";
+import type { QuotaMap, SkillMeta, TaskDetail, TaskRecord } from "../state/types";
 
 export class ApiError extends Error {
   readonly status: number;
@@ -64,6 +64,18 @@ export function createApi(token: string, fetcher: FetchLike = (i, init) => fetch
     },
     async quota(): Promise<QuotaMap> {
       return (await request<QuotaMap>("/api/quota")).data;
+    },
+    async listSkills(): Promise<SkillMeta[]> {
+      return (await request<SkillMeta[]>("/api/skills")).data;
+    },
+    async createSkill(taskId: string, name: string): Promise<SkillMeta> {
+      return (await request<SkillMeta>("/api/skills", { method: "POST", body: JSON.stringify({ task_id: taskId, name }) })).data;
+    },
+    async runSkill(skillId: string): Promise<TaskRecord> {
+      return (await request<TaskRecord>(`/api/skills/${encodeURIComponent(skillId)}/run`, { method: "POST" })).data;
+    },
+    async deleteSkill(skillId: string): Promise<void> {
+      await request(`/api/skills/${encodeURIComponent(skillId)}`, { method: "DELETE" });
     },
     screenshotUrl(id: string, idx: number): string {
       return `${base}/api/tasks/${encodeURIComponent(id)}/steps/${idx}/screenshot?token=${encodeURIComponent(token)}`;

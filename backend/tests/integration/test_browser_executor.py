@@ -81,6 +81,28 @@ async def test_scroll_and_wait(browser):
     assert (await browser.execute(Action(ActionKind.WAIT, {"seconds": 0}))).ok
 
 
+async def test_locator_is_recorded_for_element_actions(browser):
+    table = await browser.elements()
+    submit = by_name(table, "送出表單")
+    assert submit.css == "#go"
+    by_ref = await browser.execute(Action(ActionKind.CLICK_ELEMENT, {"ref": submit.ref}))
+    assert by_ref.locator["role"] == "button" and by_ref.locator["name"] == "送出表單"
+    assert by_ref.locator["css"] == "#go" and by_ref.locator["frame"] == [1280, 800]
+    assert "locator" not in by_ref.data  # 定位資訊不回傳給模型
+    by_point = await browser.execute(Action(ActionKind.CLICK, {"x": 200, "y": 215}))
+    assert by_point.locator["name"] == "你的名字" and by_point.locator["point"] == [200, 215]
+    assert (await browser.execute(Action(ActionKind.WAIT, {"seconds": 0}))).locator is None
+
+
+async def test_ref_for_css(browser):
+    ref = await browser.ref_for_css("#go")
+    assert ref == "e0"
+    assert (await browser.execute(Action(ActionKind.CLICK_ELEMENT, {"ref": ref}))).ok
+    assert await out_text(browser) == "已點擊:"
+    assert await browser.ref_for_css("button") is None  # 對到多個（含隱藏按鈕）→ 不採用
+    assert await browser.ref_for_css(":::bad") is None
+
+
 async def test_errors_are_returned_not_raised(browser):
     unknown_ref = await browser.execute(Action(ActionKind.CLICK_ELEMENT, {"ref": "e999"}))
     assert not unknown_ref.ok and "e999" in unknown_ref.message

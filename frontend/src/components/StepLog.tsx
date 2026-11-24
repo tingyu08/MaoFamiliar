@@ -1,6 +1,13 @@
 import { describeAction, shortModel } from "../lib/format";
 import type { StepView } from "../state/types";
 
+/** 這一步由哪一層處理：重播（不用 AI）、第 3 層（Decisions）、代理人模型。 */
+function LayerLabel({ step }: { step: StepView }) {
+  if (step.layer === "skill") return <span className="layer layer-skill">重播</span>;
+  if (step.layer === "actor") return <span className="layer layer-actor">Decisions</span>;
+  return <span className="mono">{shortModel(step.model)}</span>;
+}
+
 export function StepLog({ steps, screenshotUrl }: { steps: StepView[]; screenshotUrl?: (index: number) => string }) {
   if (steps.length === 0) return <p className="muted empty">還沒有步驟</p>;
   return (
@@ -17,9 +24,10 @@ export function StepLog({ steps, screenshotUrl }: { steps: StepView[]; screensho
               </div>
               <div className="step-detail">{detail}</div>
               {!step.ok && step.message && <div className="step-error">{step.message}</div>}
+              {step.ok && step.layer === "skill" && step.message && <div className="step-detail">{step.message}</div>}
             </div>
             <div className="step-meta">
-              <span className="mono">{shortModel(step.model)}</span>
+              <LayerLabel step={step} />
               {screenshotUrl && (
                 <a href={screenshotUrl(step.index)} target="_blank" rel="noreferrer">
                   截圖

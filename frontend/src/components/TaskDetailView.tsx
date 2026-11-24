@@ -2,10 +2,18 @@ import { useEffect, useState } from "react";
 import type { Api } from "../api/client";
 import { formatTime } from "../lib/format";
 import type { StepView, TaskDetail } from "../state/types";
+import { SaveSkillForm } from "./SaveSkillForm";
 import { StatusBadge } from "./StatusBadge";
 import { StepLog } from "./StepLog";
 
-export function TaskDetailView({ api, taskId, onBack }: { api: Api; taskId: string; onBack: () => void }) {
+interface Props {
+  api: Api;
+  taskId: string;
+  onBack: () => void;
+  onSkillSaved: () => void;
+}
+
+export function TaskDetailView({ api, taskId, onBack, onSkillSaved }: Props) {
   const [detail, setDetail] = useState<TaskDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -42,10 +50,17 @@ export function TaskDetailView({ api, taskId, onBack }: { api: Api; taskId: stri
           <p className="target mono">{task.target}</p>
           <p className="muted small">
             {formatTime(task.created_at)} · {task.steps_count} 步 · 呼叫模型 {task.agent_calls} 次
+            {task.actor_steps ? ` · Decisions 處理 ${task.actor_steps} 步` : ""}
+            {task.skill_steps ? ` · 重播 ${task.skill_steps} 步` : ""}
           </p>
           {(task.result_text || task.error_message) && (
             <div className={`banner ${task.status === "succeeded" ? "banner-ok" : "banner-error"}`}>
               <p>{task.result_text ?? task.error_message}</p>
+              {task.status === "succeeded" && task.mode !== "replay" && (
+                <div className="banner-actions">
+                  <SaveSkillForm api={api} taskId={task.id} defaultName={task.instruction} onSaved={onSkillSaved} />
+                </div>
+              )}
             </div>
           )}
           <StepLog steps={steps} screenshotUrl={(i) => api.screenshotUrl(task.id, i)} />

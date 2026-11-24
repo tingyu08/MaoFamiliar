@@ -110,6 +110,14 @@ describe("liveReducer", () => {
     expect(liveReducer(state, { type: "dismiss_notice" }).notice).toBeNull();
   });
 
+  it("tracks replay mode and self-healing", () => {
+    const replay = run([{ ...started, mode: "replay", skill_id: "abc" }]);
+    expect(replay.mode).toBe("replay");
+    const healing = run([{ type: "skill_heal", task_id: "t1", failed_step: 1, reason: "找不到「送出」" }], replay);
+    expect(healing.healing).toBe("找不到「送出」");
+    expect(run([started], healing).healing).toBeNull();
+  });
+
   it("tracks connection state", () => {
     expect(liveReducer(initialState, { type: "connection", value: "open" }).connection).toBe("open");
   });

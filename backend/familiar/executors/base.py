@@ -19,7 +19,12 @@ class Screenshot:
 class ExecResult:
     ok: bool
     message: str = ""
-    data: Mapping[str, Any] = field(default_factory=dict)
+    data: Mapping[str, Any] = field(default_factory=dict)  # 會回傳給模型
+    locator: Mapping[str, Any] | None = None  # 只給技能錄製用，不回傳給模型
+
+
+# 會作用在某個元素上、需要記錄定位資訊的動作
+ELEMENT_KINDS = frozenset({"click", "double_click", "right_click", "click_element", "fill_element"})
 
 
 @runtime_checkable
@@ -37,5 +42,9 @@ class Executor(Protocol):
     async def elements(self) -> ElementTable | None: ...
 
     async def is_password_target(self, action: Action) -> bool: ...
+
+    async def ref_for_css(self, css: str) -> str | None: ...
+
+    async def element_at(self, x: float, y: float) -> Mapping[str, Any] | None: ...
 
     async def close(self) -> None: ...

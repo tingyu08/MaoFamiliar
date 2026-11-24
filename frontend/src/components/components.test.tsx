@@ -6,6 +6,9 @@ import { ConfirmDialog, HelpDialog } from "./Dialogs";
 import { LiveView } from "./LiveView";
 import { NewTaskForm } from "./NewTaskForm";
 import { QuotaPanel } from "./QuotaPanel";
+import { SaveSkillForm } from "./SaveSkillForm";
+import { SkillsPanel } from "./SkillsPanel";
+import { StepLog } from "./StepLog";
 
 describe("format", () => {
   it("describes actions in Chinese", () => {
@@ -86,6 +89,56 @@ describe("LiveView", () => {
     }} />);
     expect(screen.getByRole("status")).toHaveTextContent("已點擊:小明");
     expect(screen.queryByRole("button", { name: "停止" })).toBeNull();
+  });
+});
+
+describe("StepLog layers", () => {
+  it("labels replay, decisions and agent steps", () => {
+    render(<StepLog steps={[
+      { index: 0, layer: "skill", model: null, action: { kind: "click_element", args: {}, intent: "按送出" }, ok: true, message: "定位方式：CSS" },
+      { index: 1, layer: "actor", model: "gemini-decision-1", action: { kind: "click_element", args: {}, intent: "點擊「說明」" }, ok: true, message: "" },
+      { index: 2, layer: "agent", model: "gemini-3.5-flash-lite", action: { kind: "task_done", args: {}, intent: "完成" }, ok: true, message: "" },
+    ]} />);
+    expect(screen.getByText("重播")).toBeInTheDocument();
+    expect(screen.getByText("Decisions")).toBeInTheDocument();
+    expect(screen.getByText("3.5 flash lite")).toBeInTheDocument();
+    expect(screen.getByText("定位方式：CSS")).toBeInTheDocument();
+  });
+});
+
+describe("SaveSkillForm", () => {
+  it("saves with the given name", async () => {
+    const createSkill = vi.fn(async () => ({}) as never);
+    const onSaved = vi.fn();
+    render(<SaveSkillForm api={{ createSkill } as never} taskId="t1" defaultName="送出表單" onSaved={onSaved} />);
+    fireEvent.click(screen.getByRole("button", { name: "存成技能" }));
+    fireEvent.change(screen.getByLabelText("技能名稱"), { target: { value: " 每日簽到 " } });
+    fireEvent.click(screen.getByRole("button", { name: "儲存" }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalledWith("每日簽到"));
+    expect(createSkill).toHaveBeenCalledWith("t1", "每日簽到");
+    expect(screen.getByText(/已存成技能/)).toBeInTheDocument();
+  });
+
+  it("shows server errors", async () => {
+    const { ApiError } = await import("../api/client");
+    const createSkill = vi.fn(async () => { throw new ApiError("這個任務中途請你協助過", 400); });
+    render(<SaveSkillForm api={{ createSkill } as never} taskId="t1" defaultName="x" onSaved={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "存成技能" }));
+    fireEvent.click(screen.getByRole("button", { name: "儲存" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("協助過");
+  });
+});
+
+describe("SkillsPanel", () => {
+  it("lists skills and runs one", async () => {
+    const onRun = vi.fn(async () => undefined);
+    const api = { listSkills: vi.fn(async () => [{ skill_id: "s1", name: "每日簽到", current_version: 2,
+      success_count: 3, fail_count: 1, needs_relearn: true }]) };
+    render(<SkillsPanel api={api as never} refreshKey="a" busy={false} onRun={onRun} onError={vi.fn()} />);
+    expect(await screen.findByText("每日簽到")).toBeInTheDocument();
+    expect(screen.getByText("需要重新學習")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "重播" }));
+    expect(onRun).toHaveBeenCalledWith("s1");
   });
 });
 

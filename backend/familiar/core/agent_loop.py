@@ -7,7 +7,9 @@ import time
 from dataclasses import dataclass, replace
 from typing import Any
 
-from familiar.core.action_handler import ActionHandler, describe
+from familiar.core.action_handler import ActionHandler, Handled, describe
+from familiar.core.actor_step import try_actor
+from familiar.executors.elements import ElementTable
 from familiar.core.agent_types import LoopConfig, LoopDeps, LoopResult, StepInfo, TaskSpec
 from familiar.core.events import make_event
 from familiar.core.models import Action, ActionOutcome, CallError
@@ -44,6 +46,7 @@ class Observation:
     phash: str
     thumbnail: str
     note: str | None
+    table: ElementTable | None = None
 
 
 class AgentLoop:
@@ -51,7 +54,12 @@ class AgentLoop:
         self._deps = deps
         self._config = config or LoopConfig()
 
-    async def run(self, spec: TaskSpec) -> LoopResult:
+    @property
+    def deps(self) -> LoopDeps:
+        return self._deps
+
+    async def run(self, spec: TaskSpec, first_index: int = 0) -> LoopResult:
+        """first_index：步驟編號從哪裡開始（技能重播失敗、接手修復時接在重播步驟之後）。"""
         deps, config = self._deps, self._config
         handler = ActionHandler(deps, config, spec)
         tools = deps.backend.tools(spec.environment, spec.mode)
@@ -60,8 +68,10 @@ class AgentLoop:
         pending: tuple[ActionOutcome, ...] = ()
         history: tuple[str, ...] = ()
         hashes: tuple[str, ...] = ()
-        steps = 0
+        steps = first_index
         failures = 0
+        carry_calls = 0  # 第 3 層用掉、還沒記到步驟上的 Decisions 次數
+        last_was_actor = False
 
         while True:
             stop = self._limit_reached(spec, steps, started)
@@ -71,6 +81,21 @@ class AgentLoop:
             hashes = (*hashes, observation.phash)
             if unchanged_streak(hashes) >= config.stuck_stop_steps:
                 return LoopResult(TaskStatus.FAILED, error="畫面連續多步沒有變化，任務停止", steps=steps)
+
+            attempt = await try_actor(deps, handler, spec, observation.shot, observation.table, observation.info,
+                                      observation.thumbnail, history, hashes, steps + 1, last_was_actor)
+            carry_calls += attempt.decision_calls
+            last_was_actor = attempt.handled is not None
+            if attempt.handled is not None and attempt.action is not None:
+                steps += 1
+                history = (*history, attempt.line or "")
+                await self._record(spec, steps - 1, attempt.model, attempt.action, attempt.handled, observation,
+                                   None, attempt.duration_ms, layer="actor", decision_calls=carry_calls)
+                carry_calls = 0
+                conversation, pending = Conversation(), ()  # 代理人下次要從最新進度開新對話
+                if attempt.handled.finish:
+                    return replace(attempt.handled.finish, steps=steps)
+                continue
 
             try:
                 routed = await deps.router.call(
@@ -108,8 +133,10 @@ class AgentLoop:
                 steps += 1
                 outcomes.append(handled.outcome)
                 history = (*history, _history_line(item, handled.outcome))
-                await self._record(spec, steps - 1, routed.model, item, handled.outcome, observation,
-                                   turn if position == 0 else None, int((time.perf_counter() - began) * 1000))
+                await self._record(spec, steps - 1, routed.model, item, handled, observation,
+                                   turn if position == 0 else None, int((time.perf_counter() - began) * 1000),
+                                   decision_calls=carry_calls if position == 0 else 0)
+                carry_calls = 0 if position == 0 else carry_calls
                 if handled.finish:
                     return replace(handled.finish, steps=steps)
             pending = tuple(outcomes)
@@ -138,6 +165,7 @@ class AgentLoop:
             phash=phash,
             thumbnail=thumbnail_b64(shot.png),
             note=STUCK_NOTE if streak >= self._config.stuck_warn_steps else None,
+            table=table,
         )
 
     async def _turn(self, model: str, spec: TaskSpec, conversation: Conversation,
@@ -177,19 +205,22 @@ class AgentLoop:
         return stopped
 
     async def _record(self, spec: TaskSpec, index: int, model: str, item: Action | CallError,
-                      outcome: ActionOutcome, observation: Observation, turn: AgentTurn | None,
-                      duration_ms: int) -> None:
+                      handled: Handled, observation: Observation, turn: AgentTurn | None,
+                      duration_ms: int, layer: str = "agent", decision_calls: int = 0) -> None:
         """turn 只在該輪第一個動作傳入，token 用量記在那一步。"""
+        outcome = handled.outcome
         action = describe(item) if isinstance(item, Action) else {"kind": item.name, "args": {}, "intent": ""}
         safety = ({"decision": item.safety.decision, "explanation": item.safety.explanation}
                   if isinstance(item, Action) and item.safety else None)
-        info = StepInfo(index=index, layer="agent", model=model, action=action, ok=outcome.ok,
+        info = StepInfo(index=index, layer=layer, model=model, action=action, ok=outcome.ok,
                         message=outcome.message, safety=safety, screenshot_png=observation.shot.png,
                         phash=observation.phash, duration_ms=duration_ms,
-                        tokens_in=turn.tokens_in if turn else 0, tokens_out=turn.tokens_out if turn else 0)
+                        tokens_in=turn.tokens_in if turn else 0, tokens_out=turn.tokens_out if turn else 0,
+                        locator=handled.locator, page_url=observation.info.get("url"),
+                        decision_calls=decision_calls)
         await self._deps.on_step(info)
         await self._deps.events.emit(make_event(
-            "step", task_id=spec.task_id, index=index, layer="agent", model=model, action=action,
+            "step", task_id=spec.task_id, index=index, layer=layer, model=model, action=action,
             ok=outcome.ok, message=outcome.message, thumbnail=observation.thumbnail))
 
 

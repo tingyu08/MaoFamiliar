@@ -19,7 +19,7 @@ from familiar.api.context import ServerSettings, Services
 from familiar.backends.base import ActionBackend
 from familiar.backends.custom_fc import CustomFcBackend
 from familiar.backends.native_cu import NativeCuBackend
-from familiar.config import AppConfig, load_config, to_router_config, to_safety_config
+from familiar.config import AppConfig, load_config, to_actor_config, to_router_config, to_safety_config
 from familiar.core.agent_loop import AgentLoop
 from familiar.core.agent_types import LoopDeps
 from familiar.core.events import EventBus
@@ -29,6 +29,10 @@ from familiar.executors.browser import BrowserExecutor
 from familiar.gemini.interactions import AgentModelClient, GeminiInteractionsClient
 from familiar.gemini.model_router import ModelRouter
 from familiar.gemini.quota import pacific_date
+from familiar.gemini.decisions import DecisionClient, GeminiDecisionClient
+from familiar.knowledge.decision_actor import DecisionActor
+from familiar.knowledge.replay import ReplayContext
+from familiar.knowledge.skill_store import SkillStore
 from familiar.storage.artifact_store import ArtifactStore
 from familiar.storage.db import Database
 from familiar.storage.quota_repository import QuotaRepository
@@ -54,7 +58,8 @@ def make_backend(config: AppConfig) -> ActionBackend:
     return NativeCuBackend() if config.gemini.backend == "native_cu" else CustomFcBackend()
 
 
-def build_services(config: AppConfig, data_dir: Path, client: AgentModelClient, headless: bool = False) -> Services:
+def build_services(config: AppConfig, data_dir: Path, client: AgentModelClient, headless: bool = False,
+                   decisions: DecisionClient | None = None) -> Services:
     db = Database(data_dir / "familiar.db")
     repo = TaskRepository(db)
     quota_repo = QuotaRepository(db)
@@ -71,13 +76,19 @@ def build_services(config: AppConfig, data_dir: Path, client: AgentModelClient, 
             raise ValueError("目前只支援瀏覽器（桌面執行器在 P2）")
         return BrowserExecutor(profile_dir=profile_dir, headless=headless)
 
+    actor = DecisionActor(router, decisions, to_actor_config(config)) if decisions else None
+
     def loop_factory(executor, control, on_step, on_status) -> AgentLoop:
         deps = LoopDeps(router=router, client=client, backend=backend, executor=executor, events=events,
-                        control=control, safety=safety, clock=utc_now, on_step=on_step, on_status=on_status)
+                        control=control, safety=safety, clock=utc_now, on_step=on_step, on_status=on_status,
+                        actor=actor)
         return AgentLoop(deps)
 
-    runner = TaskRunner(repo, artifacts, events, executor_factory, loop_factory, clock=utc_now)
-    return Services(runner=runner, repo=repo, artifacts=artifacts, router=router, events=events, close=db.close)
+    skills = SkillStore(data_dir / "targets")
+    runner = TaskRunner(repo, artifacts, events, executor_factory, loop_factory, clock=utc_now,
+                        replay=ReplayContext(skills, repo, utc_now))
+    return Services(runner=runner, repo=repo, artifacts=artifacts, router=router, events=events, close=db.close,
+                    skills=skills)
 
 
 def main() -> None:
@@ -87,8 +98,11 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s：%(message)s")
     key = require_api_key()
     config = load_config(BACKEND_DIR / "config.yaml")
-    sdk = genai.Client(api_key=key, http_options={"timeout": 90_000, "retry_options": {"attempts": 1}})
-    services = build_services(config, BACKEND_DIR / "data", GeminiInteractionsClient(sdk))
+    http_options = {"timeout": 90_000, "retry_options": {"attempts": 1}}
+    sdk = genai.Client(api_key=key, http_options=http_options)
+    decisions_sdk = genai.Client(api_key=key, http_options={**http_options, "api_version": "v1beta"})
+    services = build_services(config, BACKEND_DIR / "data", GeminiInteractionsClient(sdk),
+                              decisions=GeminiDecisionClient(decisions_sdk))
     settings = ServerSettings(port=8765)
     app = create_app(services, settings, frontend_dir=BACKEND_DIR.parent / "frontend" / "dist",
                      on_shutdown=services.close)

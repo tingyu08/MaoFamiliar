@@ -4,6 +4,8 @@ import { ConfirmDialog, HelpDialog } from "./components/Dialogs";
 import { LiveView } from "./components/LiveView";
 import { NewTaskForm } from "./components/NewTaskForm";
 import { QuotaPanel } from "./components/QuotaPanel";
+import { SaveSkillForm } from "./components/SaveSkillForm";
+import { SkillsPanel } from "./components/SkillsPanel";
 import { TaskDetailView } from "./components/TaskDetailView";
 import { TaskHistory } from "./components/TaskHistory";
 import { useLive } from "./hooks/useLive";
@@ -14,9 +16,18 @@ const CONNECTION_TEXT = { connecting: "連線中", open: "已連線", closed: "�
 
 export function App({ token }: { token: string }) {
   const api = useMemo(() => createApi(token), [token]);
-  const { state, start, stop, answerConfirm, helpDone, dismissNotice } = useLive(api, token);
+  const { state, start, stop, runSkill, answerConfirm, helpDone, dismissNotice, showNotice } = useLive(api, token);
   const [viewing, setViewing] = useState<string | null>(null);
+  const [skillsVersion, setSkillsVersion] = useState(0);
   const busy = state.status !== null && !FINAL_STATUSES.includes(state.status);
+  const refreshKey = `${state.taskId}:${state.status}`;
+  const onSkillSaved = () => setSkillsVersion((v) => v + 1);
+
+  const canSave = state.taskId && state.result?.status === "succeeded" && state.mode === "agent";
+  const resultActions = canSave ? (
+    <SaveSkillForm key={state.taskId} api={api} taskId={state.taskId!} defaultName={state.instruction ?? ""}
+      onSaved={onSkillSaved} />
+  ) : undefined;
 
   return (
     <div className="app">
@@ -43,14 +54,19 @@ export function App({ token }: { token: string }) {
             setViewing(null);
             return start(url, instruction);
           }} />
+          <SkillsPanel api={api} busy={busy} refreshKey={`${refreshKey}:${skillsVersion}`} onError={showNotice}
+            onRun={async (skillId) => {
+              setViewing(null);
+              await runSkill(skillId);
+            }} />
           <QuotaPanel quota={state.quota} currentModel={state.currentModel} />
-          <TaskHistory api={api} refreshKey={`${state.taskId}:${state.status}`} selectedId={viewing} onSelect={setViewing} />
+          <TaskHistory api={api} refreshKey={refreshKey} selectedId={viewing} onSelect={setViewing} />
         </aside>
         <div className="main">
           {viewing && viewing !== state.taskId ? (
-            <TaskDetailView api={api} taskId={viewing} onBack={() => setViewing(null)} />
+            <TaskDetailView api={api} taskId={viewing} onBack={() => setViewing(null)} onSkillSaved={onSkillSaved} />
           ) : (
-            <LiveView state={state} onStop={stop} screenshotUrl={api.screenshotUrl} />
+            <LiveView state={state} onStop={stop} screenshotUrl={api.screenshotUrl} resultActions={resultActions} />
           )}
         </div>
       </main>

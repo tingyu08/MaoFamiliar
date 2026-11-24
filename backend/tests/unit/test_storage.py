@@ -83,6 +83,22 @@ class TestTaskRepository:
         assert repo.get("t1").status is TaskStatus.WAITING_USER
 
 
+def test_old_database_is_migrated(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "old.db"
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE steps (task_id TEXT, idx INTEGER, layer TEXT, model TEXT, action_json TEXT, "
+                 "result_json TEXT, safety_json TEXT, screenshot_path TEXT, phash TEXT, duration_ms INTEGER, "
+                 "tokens_in INTEGER, tokens_out INTEGER, PRIMARY KEY (task_id, idx))")
+    conn.commit()
+    conn.close()
+    database = Database(path)
+    columns = {row["name"] for row in database.query("PRAGMA table_info(steps)")}
+    assert {"locator_json", "page_url"} <= columns
+    database.close()
+
+
 class TestQuotaRepository:
     def test_round_trip_for_today(self, db):
         repo = QuotaRepository(db)

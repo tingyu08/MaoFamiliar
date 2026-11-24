@@ -17,6 +17,7 @@ from familiar.core.events import EventSink, make_event
 from familiar.core.models import Environment
 from familiar.core.tasks import TaskRecord, TaskStatus
 from familiar.executors.base import Executor
+from familiar.knowledge.replay import ReplayContext, run_replay
 from familiar.storage.artifact_store import ArtifactStore
 from familiar.storage.task_repository import StepRecord, TaskRepository
 
@@ -27,6 +28,7 @@ OnStep = Callable[[StepInfo], Awaitable[None]]
 OnStatus = Callable[[TaskStatus], Awaitable[None]]
 LoopFactory = Callable[[Executor, TaskControl, OnStep, OnStatus], AgentLoop]
 ExecutorFactory = Callable[[Environment], Executor]
+RunBody = Callable[[AgentLoop, TaskSpec], Awaitable[LoopResult]]
 
 
 class TaskBusyError(Exception):
@@ -54,13 +56,15 @@ def validate_request(url: str, instruction: str) -> None:
 
 class TaskRunner:
     def __init__(self, repo: TaskRepository, artifacts: ArtifactStore, events: EventSink,
-                 executor_factory: ExecutorFactory, loop_factory: LoopFactory, clock: Callable[[], datetime]):
+                 executor_factory: ExecutorFactory, loop_factory: LoopFactory, clock: Callable[[], datetime],
+                 replay: ReplayContext | None = None):
         self._repo = repo
         self._artifacts = artifacts
         self._events = events
         self._executor_factory = executor_factory
         self._loop_factory = loop_factory
         self._clock = clock
+        self._replay = replay
         self._current: _Running | None = None
 
     @property
@@ -74,18 +78,35 @@ class TaskRunner:
 
     async def start(self, url: str, instruction: str) -> TaskRecord:
         validate_request(url, instruction)
+        return await self._launch(url, instruction.strip(), "browser", None, lambda loop, spec: loop.run(spec))
+
+    async def start_replay(self, skill_id: str) -> TaskRecord:
+        """重播技能（第 1 層）；失敗時自動交給代理人修復（FR-303、FR-404）。"""
+        if self._replay is None:
+            raise InvalidTaskError("沒有啟用技能功能")
+        meta = self._replay.skills.meta(skill_id)
+        version = self._replay.skills.version(skill_id)
+        ctx = self._replay
+
+        def body(loop: AgentLoop, spec: TaskSpec) -> Awaitable[LoopResult]:
+            return run_replay(ctx, loop, spec, version, meta.instruction)
+
+        return await self._launch(meta.start_url, f"重播技能：{meta.name}", "replay", skill_id, body)
+
+    async def _launch(self, url: str, instruction: str, mode: str, skill_id: str | None, body: RunBody) -> TaskRecord:
         if self.current_task_id:
             raise TaskBusyError("已經有任務在執行，請先停止或等它結束")
         record = TaskRecord(id=uuid.uuid4().hex[:16], environment=Environment.BROWSER.value, target=url,
-                            instruction=instruction.strip(), mode="browser", status=TaskStatus.RUNNING,
-                            created_at=self._clock())
+                            instruction=instruction, mode=mode, status=TaskStatus.RUNNING,
+                            created_at=self._clock(), skill_id=skill_id)
         self._repo.create(record)
         control = TaskControl()
         spec = TaskSpec(task_id=record.id, instruction=record.instruction, environment=Environment.BROWSER)
-        job = asyncio.create_task(self._run(spec, url, control))
+        job = asyncio.create_task(self._run(spec, url, control, body))
         self._current = _Running(record.id, control, job)
         await self._events.emit(make_event("task_started", task_id=record.id, target=url,
-                                           instruction=record.instruction, mode="agent"))
+                                           instruction=record.instruction,
+                                           mode="replay" if skill_id else "agent", skill_id=skill_id))
         return record
 
     def stop(self, task_id: str) -> bool:
@@ -113,10 +134,10 @@ class TaskRunner:
             running.control.request_stop()
             await asyncio.wait({running.job}, timeout=10)
 
-    async def _run(self, spec: TaskSpec, url: str, control: TaskControl) -> None:
+    async def _run(self, spec: TaskSpec, url: str, control: TaskControl, body: RunBody) -> None:
         executor = self._executor_factory(spec.environment)
         try:
-            result = await self._execute(spec, url, control, executor)
+            result = await self._execute(spec, url, control, executor, body)
         finally:
             try:
                 await executor.close()
@@ -127,7 +148,8 @@ class TaskRunner:
         await self._events.emit(make_event("task_finished", task_id=spec.task_id, status=result.status.value,
                                            result_text=result.text, error=result.error, steps=result.steps))
 
-    async def _execute(self, spec: TaskSpec, url: str, control: TaskControl, executor: Executor) -> LoopResult:
+    async def _execute(self, spec: TaskSpec, url: str, control: TaskControl, executor: Executor,
+                       body: RunBody) -> LoopResult:
         try:
             await executor.start(url)
         except Exception:  # noqa: BLE001
@@ -135,7 +157,7 @@ class TaskRunner:
             return LoopResult(TaskStatus.FAILED, error="無法開啟網址，請確認網址是否正確、網路是否正常")
         loop = self._loop_factory(executor, control, self._step_saver(spec.task_id), self._status_saver(spec.task_id))
         try:
-            return await loop.run(spec)
+            return await body(loop, spec)
         except Exception:  # noqa: BLE001 — 最外層：任何未預期錯誤都要讓任務正常結束
             logger.exception("任務 %s 發生未預期的錯誤", spec.task_id)
             return LoopResult(TaskStatus.FAILED, error="發生未預期的錯誤（詳細內容請看後端日誌）")
@@ -147,7 +169,8 @@ class TaskRunner:
                 task_id=task_id, idx=info.index, layer=info.layer, model=info.model, action=info.action,
                 result={"ok": info.ok, "message": info.message}, safety=info.safety, screenshot_path=path,
                 phash=info.phash, duration_ms=info.duration_ms, tokens_in=info.tokens_in,
-                tokens_out=info.tokens_out))
+                tokens_out=info.tokens_out, locator=info.locator, page_url=info.page_url,
+                decision_calls=info.decision_calls))
         return save
 
     def _status_saver(self, task_id: str) -> OnStatus:

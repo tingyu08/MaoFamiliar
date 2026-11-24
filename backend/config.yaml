@@ -24,6 +24,12 @@ gemini:
     tpm: 50000                  # 每分鐘輸入 token（第 0 週 429 訊息）
     screenshot_max_side: 1024
     confidence_threshold: 0.8
+  actor:                        # 第 3 層：只需要點擊的步驟由 Decisions API 從畫面候選中挑選
+    enabled: true
+    mark_threshold: 0.8         # 選中選項的信心門檻（spike 04：答對時平均 0.96–0.99）
+    risk_threshold: 0.5         # 「點了會不會不可復原」的機率超過這個值就要使用者確認
+    max_candidates: 60
+    stall_steps: 2              # 畫面連續幾步沒變化就改交給代理人模型
   enable_prompt_injection_detection: true
 
 browser:

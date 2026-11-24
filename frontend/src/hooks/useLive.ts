@@ -46,6 +46,17 @@ export function useLive(api: Api, token: string, socketUrl: string = defaultSock
     [api, showNotice],
   );
 
+  const runSkill = useCallback(
+    async (skillId: string) => {
+      try {
+        await api.runSkill(skillId);
+      } catch (error) {
+        showNotice(error instanceof ApiError ? error.message : "重播技能失敗");
+      }
+    },
+    [api, showNotice],
+  );
+
   const stop = useCallback(async () => {
     if (!state.taskId) return;
     try {
@@ -79,5 +90,5 @@ export function useLive(api: Api, token: string, socketUrl: string = defaultSock
 
   const dismissNotice = useCallback(() => dispatch({ type: "dismiss_notice" }), []);
 
-  return { state, start, stop, answerConfirm, helpDone, dismissNotice };
+  return { state, start, stop, runSkill, answerConfirm, helpDone, dismissNotice, showNotice };
 }

@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from familiar.core.safety import SafetyConfig
 from familiar.gemini.model_router import Role, RouterConfig
 from familiar.gemini.quota import ModelLimits
+from familiar.knowledge.decision_actor import ActorConfig
 
 
 class _Strict(BaseModel):
@@ -44,7 +45,17 @@ class DecisionCfg(BaseModel):
     rpm: int = Field(default=200, ge=0)
     rpd: int = Field(default=10_000, ge=0)
     tpm: int = Field(default=50_000, ge=0)
+    screenshot_max_side: int = Field(default=1024, ge=256, le=4096)
     confidence_threshold: float = Field(default=0.8, gt=0, le=1)
+
+
+class ActorCfg(_Strict):
+    """第 3 層：Decisions 選候選（SDD 2.1）。"""
+    enabled: bool = True
+    mark_threshold: float = Field(default=0.8, gt=0, le=1)
+    risk_threshold: float = Field(default=0.5, gt=0, le=1)
+    max_candidates: int = Field(default=60, ge=1, le=254)
+    stall_steps: int = Field(default=2, ge=1)
 
 
 class GeminiCfg(BaseModel):
@@ -54,6 +65,7 @@ class GeminiCfg(BaseModel):
     chains: ChainsCfg
     overload: OverloadCfg = OverloadCfg()
     decision: DecisionCfg = DecisionCfg()
+    actor: ActorCfg = ActorCfg()
     enable_prompt_injection_detection: bool = True
 
     @model_validator(mode="after")
@@ -102,6 +114,13 @@ def to_router_config(config: AppConfig) -> RouterConfig:
         cooldown_initial=timedelta(seconds=g.overload.cooldown_initial_sec),
         cooldown_max=timedelta(minutes=g.overload.cooldown_max_min),
     )
+
+
+def to_actor_config(config: AppConfig) -> ActorConfig:
+    a = config.gemini.actor
+    return ActorConfig(enabled=a.enabled, mark_threshold=a.mark_threshold, risk_threshold=a.risk_threshold,
+                       max_candidates=a.max_candidates, stall_steps=a.stall_steps,
+                       screenshot_max_side=config.gemini.decision.screenshot_max_side)
 
 
 def to_safety_config(config: AppConfig) -> SafetyConfig:

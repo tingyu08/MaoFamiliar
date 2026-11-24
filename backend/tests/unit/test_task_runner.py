@@ -56,6 +56,9 @@ async def test_successful_task_is_persisted(tmp_path):
     assert saved.steps_count == 2 and saved.agent_calls == 2
     steps = env.repo.steps(record.id)
     assert env.artifacts.read(steps[0].screenshot_path).startswith(b"\x89PNG")
+    assert steps[0].locator["name"] == "送出" and steps[0].locator["css"] == "#go"
+    assert steps[0].page_url == "https://example.test/form"
+    assert steps[1].locator is None  # task_done 沒有目標元素
     assert env.sink.types()[0] == "task_started" and env.sink.types()[-1] == "task_finished"
     assert env.runner.current_task_id is None
 

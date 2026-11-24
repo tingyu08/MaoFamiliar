@@ -11,7 +11,7 @@ from familiar.core.tasks import ACTIVE_STATUSES, TaskRecord, TaskStatus
 from familiar.storage.db import Database
 
 _TASK_COLUMNS = ("id, environment, target, instruction, mode, status, result_text, error_message, steps_count, "
-                 "agent_calls, decision_calls, skill_steps, actor_steps, created_at, finished_at")
+                 "agent_calls, decision_calls, skill_steps, actor_steps, created_at, finished_at, skill_id")
 _LAYER_COUNTER = {"agent": "agent_calls", "actor": "actor_steps", "skill": "skill_steps"}
 
 
@@ -29,6 +29,13 @@ class StepRecord:
     duration_ms: int
     tokens_in: int = 0
     tokens_out: int = 0
+    locator: dict[str, Any] | None = None
+    page_url: str | None = None
+    decision_calls: int = 0  # 這一步用掉幾次 Decisions API（第 3 層）
+
+
+def _loads(value: str | None) -> Any:
+    return json.loads(value) if value else None
 
 
 def _dt(value: str | None) -> datetime | None:
@@ -48,9 +55,10 @@ def _to_step(row: dict[str, Any]) -> StepRecord:
     return StepRecord(
         task_id=row["task_id"], idx=row["idx"], layer=row["layer"], model=row["model"],
         action=json.loads(row["action_json"]), result=json.loads(row["result_json"]),
-        safety=json.loads(row["safety_json"]) if row["safety_json"] else None,
+        safety=_loads(row["safety_json"]),
         screenshot_path=row["screenshot_path"], phash=row["phash"], duration_ms=row["duration_ms"],
         tokens_in=row["tokens_in"], tokens_out=row["tokens_out"],
+        locator=_loads(row.get("locator_json")), page_url=row.get("page_url"),
     )
 
 
@@ -60,10 +68,10 @@ class TaskRepository:
 
     def create(self, task: TaskRecord) -> None:
         self._db.execute(
-            "INSERT INTO tasks (id, environment, target, instruction, mode, status, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO tasks (id, environment, target, instruction, mode, status, created_at, skill_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (task.id, task.environment, task.target, task.instruction, task.mode, task.status.value,
-             _iso(task.created_at)),
+             _iso(task.created_at), task.skill_id),
         )
 
     def get(self, task_id: str) -> TaskRecord | None:
@@ -89,15 +97,19 @@ class TaskRepository:
     def add_step(self, step: StepRecord) -> None:
         self._db.execute(
             "INSERT INTO steps (task_id, idx, layer, model, action_json, result_json, safety_json, "
-            "screenshot_path, phash, duration_ms, tokens_in, tokens_out) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            "screenshot_path, phash, duration_ms, tokens_in, tokens_out, locator_json, page_url) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (step.task_id, step.idx, step.layer, step.model,
              json.dumps(step.action, ensure_ascii=False), json.dumps(step.result, ensure_ascii=False),
              json.dumps(step.safety, ensure_ascii=False) if step.safety else None,
-             step.screenshot_path, step.phash, step.duration_ms, step.tokens_in, step.tokens_out),
+             step.screenshot_path, step.phash, step.duration_ms, step.tokens_in, step.tokens_out,
+             json.dumps(step.locator, ensure_ascii=False) if step.locator else None, step.page_url),
         )
         counter = _LAYER_COUNTER.get(step.layer)
         extra = f", {counter} = {counter} + 1" if counter else ""
-        self._db.execute(f"UPDATE tasks SET steps_count = steps_count + 1{extra} WHERE id = ?", (step.task_id,))
+        self._db.execute(
+            f"UPDATE tasks SET steps_count = steps_count + 1, decision_calls = decision_calls + ?{extra} WHERE id = ?",
+            (step.decision_calls, step.task_id))
 
     def steps(self, task_id: str) -> list[StepRecord]:
         rows = self._db.query("SELECT * FROM steps WHERE task_id = ? ORDER BY idx", (task_id,))

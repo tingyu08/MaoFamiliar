@@ -18,7 +18,9 @@ from familiar.core.safety import SafetyConfig
 from familiar.core.tasks import TaskStatus
 from familiar.executors.base import ExecResult, Screenshot
 from familiar.executors.elements import Element, ElementTable
+from familiar.gemini.decisions import Answer, DecisionResult
 from familiar.gemini.interactions import AgentTurn
+from familiar.knowledge.decision_actor import DecisionActor
 from familiar.gemini.model_router import ModelRouter, Role, RouterConfig
 
 SPEC = TaskSpec(task_id="t1", instruction="送出表單", environment=Environment.BROWSER)
@@ -40,17 +42,26 @@ def frame_png(n: int) -> bytes:
     return buffer.getvalue()
 
 
+DEFAULT_ELEMENTS = (Element("e1", "button", "送出", 10, 10, 60, 40, css="#go"),)
+
+
 class FakeExecutor:
     environment = Environment.BROWSER
 
-    def __init__(self, static_screen: bool = False, password: bool = False):
+    def __init__(self, static_screen: bool = False, password: bool = False,
+                 elements: tuple[Element, ...] = DEFAULT_ELEMENTS, css_refs: dict[str, str] | None = None,
+                 failing_kinds: frozenset[str] = frozenset()):
         self.static_screen = static_screen
         self.password = password
+        self.element_list = elements
+        self.css_refs = css_refs or {}
+        self.failing_kinds = failing_kinds
         self.executed: list[Action] = []
+        self.started: list[str] = []
         self._shots = 0
 
     async def start(self, target: str) -> None:
-        pass
+        self.started.append(target)
 
     async def screenshot(self) -> Screenshot:
         self._shots += 1
@@ -58,16 +69,28 @@ class FakeExecutor:
 
     async def execute(self, action: Action) -> ExecResult:
         self.executed.append(action)
-        return ExecResult(True)
+        if action.kind.value in self.failing_kinds:
+            return ExecResult(False, "模擬失敗")
+        target = next((e for e in self.element_list if e.ref == action.args.get("ref")), None)
+        locator = ({"role": target.role, "name": target.name, "css": target.css, **target.box,
+                    "point": list(target.center), "frame": [320, 200]} if target else None)
+        return ExecResult(True, locator=locator)
 
     async def context_info(self) -> dict[str, str]:
         return {"url": "https://example.test/form", "title": "表單"}
 
     async def elements(self) -> ElementTable:
-        return ElementTable((Element("e1", "button", "送出", 10, 10, 60, 40),))
+        return ElementTable(self.element_list)
 
     async def is_password_target(self, action: Action) -> bool:
         return self.password
+
+    async def ref_for_css(self, css: str) -> str | None:
+        return self.css_refs.get(css)
+
+    async def element_at(self, x: float, y: float) -> dict[str, Any] | None:
+        hit = next((e for e in self.element_list if e.x1 <= x <= e.x2 and e.y1 <= y <= e.y2), None)
+        return {"role": hit.role, "name": hit.name} if hit else {"role": "body", "name": ""}
 
     async def close(self) -> None:
         pass
@@ -115,7 +138,7 @@ class RecordingSink:
 class Harness:
     def __init__(self, client: ScriptedClient, executor: FakeExecutor | None = None,
                  config: LoopConfig | None = None, chain=("lite", "flash"),
-                 on_event: Callable[[dict[str, Any]], None] | None = None):
+                 on_event: Callable[[dict[str, Any]], None] | None = None, decisions: Any = None):
         self.client = client
         self.executor = executor or FakeExecutor()
         self.control = TaskControl()
@@ -126,11 +149,13 @@ class Harness:
         async def no_sleep(_seconds: float) -> None:
             return None
 
-        router = ModelRouter(RouterConfig(chains={Role.ACTION: chain}), clock=lambda: datetime.now(UTC),
-                             sleep=no_sleep)
+        router = ModelRouter(RouterConfig(chains={Role.ACTION: chain, Role.DECISION: ("decision-1",)}),
+                             clock=lambda: datetime.now(UTC), sleep=no_sleep)
+        actor = DecisionActor(router, decisions) if decisions is not None else None
         deps = LoopDeps(router=router, client=client, backend=CustomFcBackend(), executor=self.executor,
                         events=self.sink, control=self.control, safety=SafetyConfig(),
-                        clock=lambda: datetime.now(UTC), on_step=self._on_step, on_status=self._on_status)
+                        clock=lambda: datetime.now(UTC), on_step=self._on_step, on_status=self._on_status,
+                        actor=actor)
         self.loop = AgentLoop(deps, config or LoopConfig())
 
     async def _on_step(self, info: StepInfo) -> None:
@@ -141,6 +166,26 @@ class Harness:
 
     async def run(self):
         return await self.loop.run(SPEC)
+
+
+class ScriptedDecisions:
+    """照順序回傳 Decisions 結果。項目可以是 (選項, 信心) → choice；浮點數 → noul 機率；或例外。"""
+
+    def __init__(self, *script: Any):
+        self.script = list(script)
+        self.requests: list[dict[str, Any]] = []
+
+    async def decide(self, *, model, image_png, questions):
+        self.requests.append({"model": model, "questions": questions, "png": image_png})
+        item = self.script.pop(0) if self.script else ("none", 0.99)
+        if isinstance(item, Exception):
+            raise item
+        key = next(iter(questions))
+        if isinstance(item, float):
+            answer = Answer(kind="noul", probability=item, confidence=max(item, 1 - item))
+        else:
+            answer = Answer(kind="choice", choice=item[0], confidence=item[1])
+        return DecisionResult(answers={key: answer}, tokens_in=1200)
 
 
 def later(fn: Callable[[], Any]) -> None:

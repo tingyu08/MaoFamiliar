@@ -21,6 +21,8 @@ export type LiveAction =
 export const initialState: LiveState = {
   connection: "connecting",
   taskId: null,
+  mode: null,
+  healing: null,
   target: null,
   instruction: null,
   status: null,
@@ -81,8 +83,11 @@ function applyEvent(state: LiveState, event: ServerEvent): LiveState {
         taskId: str(event.task_id),
         target: str(event.target),
         instruction: str(event.instruction),
+        mode: event.mode === "replay" ? "replay" : "agent",
         status: "running",
       };
+    case "skill_heal":
+      return { ...state, healing: str(event.reason) || "重播失敗" };
     case "task_status": {
       const status = str(event.status) as TaskStatus;
       return status === "running" ? { ...clearPrompts(state), status } : { ...state, status };
@@ -138,6 +143,7 @@ function loadTask(state: LiveState, detail: TaskDetail): LiveState {
   return {
     ...state,
     taskId: detail.task.id,
+    mode: detail.task.mode === "replay" ? "replay" : "agent",
     target: detail.task.target,
     instruction: detail.task.instruction,
     status: detail.task.status,

@@ -63,6 +63,8 @@ export type ConnectionState = "connecting" | "open" | "closed";
 export interface LiveState {
   connection: ConnectionState;
   taskId: string | null;
+  mode: "agent" | "replay" | null;
+  healing: string | null; // 技能重播失敗、AI 接手修復時的原因
   target: string | null;
   instruction: string | null;
   status: TaskStatus | null;
@@ -92,7 +94,26 @@ export interface TaskRecord {
   error_message: string | null;
   steps_count: number;
   agent_calls: number;
+  decision_calls?: number;
+  skill_steps?: number;
+  actor_steps?: number;
   finished_at: string | null;
+  skill_id?: string | null;
+}
+
+export interface SkillMeta {
+  skill_id: string;
+  name: string;
+  target_id: string;
+  start_url: string;
+  instruction: string;
+  current_version: number;
+  success_count: number;
+  fail_count: number;
+  consecutive_failures: number;
+  needs_relearn: boolean;
+  step_count?: number;
+  updated_at: string;
 }
 
 export interface StepRecord {

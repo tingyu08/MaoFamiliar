@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from familiar.api import routes, ws
+from familiar.api import routes, skill_routes, ws
 from familiar.api.context import ServerSettings, Services
 from familiar.api.envelope import http_error_handler, validation_error_handler
 
@@ -38,6 +38,7 @@ def create_app(services: Services, settings: ServerSettings, frontend_dir: Path 
     app.add_exception_handler(StarletteHTTPException, http_error_handler)
     app.add_exception_handler(RequestValidationError, validation_error_handler)
     app.include_router(routes.router)
+    app.include_router(skill_routes.router)
     app.include_router(ws.router)
     if frontend_dir and frontend_dir.is_dir():
         app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="frontend")

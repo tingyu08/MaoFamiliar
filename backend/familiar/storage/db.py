@@ -53,6 +53,13 @@ CREATE TABLE IF NOT EXISTS quota_usage (
 );
 """
 
+# 後來新增的欄位：舊資料庫啟動時自動補上（簡易 migration）
+ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
+    ("steps", "locator_json", "TEXT"),   # 第 4 週：技能錄製用的元素定位資訊
+    ("steps", "page_url", "TEXT"),       # 第 4 週：動作前的網址
+    ("tasks", "skill_id", "TEXT"),       # 第 4 週：重播任務對應的技能
+)
+
 
 class Database:
     def __init__(self, path: Path):
@@ -63,7 +70,14 @@ class Database:
         with self._lock:
             self._conn.execute("PRAGMA foreign_keys = ON")
             self._conn.executescript(SCHEMA)
+            self._migrate()
             self._conn.commit()
+
+    def _migrate(self) -> None:
+        for table, column, kind in ADDED_COLUMNS:
+            existing = {row["name"] for row in self._conn.execute(f"PRAGMA table_info({table})")}
+            if column not in existing:
+                self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
 
     def execute(self, sql: str, params: Sequence[Any] = ()) -> int:
         with self._lock:

@@ -51,28 +51,69 @@ def find_ref(blocks: Any, name: str) -> str:
 
 
 class ScriptedFormModel:
-    """照劇本操作 form.html；每輪之間可以加延遲，讓畫面看得到變化。"""
+    """照劇本操作 form.html；每輪之間可以加延遲，讓畫面看得到變化。
 
-    def __init__(self, delay: float = 0.0, risky_submit: bool = True):
+    - 第 3 層已經按過送出（歷史裡有「點擊「送出表單」」）就直接回報完成。
+    - heal_button 有設定時，收到自我修復的指示（「原本的任務」）就改按這個按鈕。
+    """
+
+    def __init__(self, delay: float = 0.0, risky_submit: bool = True, heal_button: str | None = None):
         self.delay = delay
         self.risky_submit = risky_submit
+        self.heal_button = heal_button
         self.turns = 0
+        self._stage = 0
+
+    def _next_call(self, text: str, blocks: Any) -> dict[str, Any]:
+        done = {"name": "task_done", "arguments": {"summary": "頁面顯示：已點擊:小明", "intent": "回報結果"}}
+        if "點擊「送出表單」" in text or "點擊「提交表單」" in text:
+            return done
+        if self.heal_button and "原本的任務" in text and self._stage < 10:
+            self._stage = 10
+            return {"name": "click_element", "arguments": {"ref": find_ref(blocks, self.heal_button),
+                                                           "intent": f"按下{self.heal_button}"}}
+        self._stage += 1
+        if self._stage == 1:
+            return {"name": "fill_element", "arguments": {"ref": find_ref(blocks, "你的名字"), "text": "小明",
+                                                          "intent": "在名字欄位輸入小明"}}
+        if self._stage == 2:
+            return {"name": "click_element", "arguments": {"ref": find_ref(blocks, "送出表單"), "intent": "按下送出表單",
+                                                           "risk": "high" if self.risky_submit else "low"}}
+        self._stage = 0  # 下一個任務重新開始
+        return done
 
     async def create_turn(self, *, model, system_instruction, input, tools, previous_interaction_id):
         import asyncio
 
         await asyncio.sleep(self.delay)
         self.turns += 1
-        if self.turns == 1:
-            call = {"name": "fill_element", "arguments": {"ref": find_ref(input, "你的名字"), "text": "小明",
-                                                          "intent": "在名字欄位輸入小明"}}
-        elif self.turns == 2:
-            call = {"name": "click_element", "arguments": {"ref": find_ref(input, "送出表單"), "intent": "按下送出表單",
-                                                           "risk": "high" if self.risky_submit else "low"}}
-        else:
-            call = {"name": "task_done", "arguments": {"summary": "頁面顯示：已點擊:小明", "intent": "回報結果"}}
+        call = self._next_call(_texts(input), input)
+        if call["name"] == "task_done":
+            self._stage = 0
         return AgentTurn(interaction_id=f"demo-{self.turns}", function_calls=({"id": f"c{self.turns}", **call},),
                          text="", tokens_in=1500)
+
+
+class FormDecisions:
+    """假的 Decisions API：名字填好之後，選「送出表單」；其他時候回答 none。"""
+
+    def __init__(self, risky: bool = False):
+        self.risky = risky
+        self.calls = 0
+
+    async def decide(self, *, model, image_png, questions):
+        from familiar.gemini.decisions import Answer, DecisionResult
+
+        self.calls += 1
+        key, question = next(iter(questions.items()))
+        if question["type"] == "noul":
+            probability = 0.9 if self.risky else 0.1
+            return DecisionResult({key: Answer("noul", probability=probability, confidence=0.9)}, tokens_in=1000)
+        choice = "none"
+        history = question["instructions"].split("已經做過的步驟")[-1]
+        if "輸入小明" in history:
+            choice = next((k for k, v in question["criteria"].items() if "送出表單" in v), "none")
+        return DecisionResult({key: Answer("choice", choice=choice, confidence=0.95)}, tokens_in=1200)
 
 
 @dataclass
@@ -83,18 +124,27 @@ class DemoServer:
     stop: Any
 
 
-def _start_pages() -> ThreadingHTTPServer:
-    handler = functools.partial(SimpleHTTPRequestHandler, directory=str(PAGES))
-    handler.log_message = lambda *a, **k: None  # type: ignore[method-assign]
+class _QuietHandler(SimpleHTTPRequestHandler):
+    def log_message(self, *args: Any) -> None:
+        pass
+
+    def end_headers(self) -> None:
+        self.send_header("Cache-Control", "no-store")  # 測試會在中途修改網頁，不能被快取
+        super().end_headers()
+
+
+def _start_pages(pages_dir: Path) -> ThreadingHTTPServer:
+    handler = functools.partial(_QuietHandler, directory=str(pages_dir))
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server
 
 
-def start_demo(data_dir: Path, port: int, model: Any | None = None, headless: bool = True) -> DemoServer:
-    pages = _start_pages()
+def start_demo(data_dir: Path, port: int, model: Any | None = None, headless: bool = True,
+               decisions: Any | None = None, pages_dir: Path = PAGES) -> DemoServer:
+    pages = _start_pages(pages_dir)
     services = build_services(load_config(BACKEND / "config.yaml"), data_dir, model or ScriptedFormModel(),
-                              headless=headless)
+                              headless=headless, decisions=decisions)
     settings = ServerSettings(port=port, token=DEMO_TOKEN)
     app = create_app(services, settings, frontend_dir=FRONTEND_DIST, on_shutdown=services.close)
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
@@ -120,7 +170,7 @@ if __name__ == "__main__":
     import tempfile
 
     demo = start_demo(Path(tempfile.mkdtemp(prefix="familiar-demo-")), port=8766,
-                      model=ScriptedFormModel(delay=1.5), headless=True)
+                      model=ScriptedFormModel(delay=1.5), headless=True, decisions=FormDecisions(risky=True))
     print(f"示範網址：{demo.base_url}/?token={demo.token}", flush=True)
     print(f"測試網頁：{demo.page_url}/form.html", flush=True)
     try:

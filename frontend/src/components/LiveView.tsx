@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { FINAL_STATUSES, type LiveState } from "../state/types";
 import { formatTime } from "../lib/format";
 import { StatusBadge } from "./StatusBadge";
@@ -7,9 +8,10 @@ interface Props {
   state: LiveState;
   onStop: () => void;
   screenshotUrl: (taskId: string, index: number) => string;
+  resultActions?: ReactNode; // 例如「存成技能」
 }
 
-export function LiveView({ state, onStop, screenshotUrl }: Props) {
+export function LiveView({ state, onStop, screenshotUrl, resultActions }: Props) {
   const running = state.status !== null && !FINAL_STATUSES.includes(state.status);
   if (!state.taskId) {
     return (
@@ -35,6 +37,13 @@ export function LiveView({ state, onStop, screenshotUrl }: Props) {
       </header>
       {state.target && <p className="target mono">{state.target}</p>}
 
+      {state.mode === "replay" && !state.result && (
+        <div className={`banner ${state.healing ? "banner-warn" : "banner-info"}`} role="status">
+          {state.healing
+            ? `重播在中途失敗（${state.healing}），AI 正在接手修復；修好後會自動存成技能的新版本。`
+            : "正在重播技能：照錄好的步驟操作，不呼叫 AI。"}
+        </div>
+      )}
       {state.status === "waiting_quota" && (
         <div className="banner banner-warn" role="status">
           所有模型的額度暫時用完，預計 {formatTime(state.waitingQuotaUntil) || "稍後"} 恢復後自動繼續。
@@ -44,6 +53,7 @@ export function LiveView({ state, onStop, screenshotUrl }: Props) {
         <div className={`banner ${state.result.status === "succeeded" ? "banner-ok" : "banner-error"}`} role="status">
           <strong>{state.result.status === "succeeded" ? "結果" : state.result.status === "stopped" ? "已停止" : "失敗"}</strong>
           <p>{state.result.text ?? state.result.error ?? ""}</p>
+          {resultActions && <div className="banner-actions">{resultActions}</div>}
         </div>
       )}
 

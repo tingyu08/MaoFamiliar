@@ -24,6 +24,7 @@ PASSWORD_MESSAGE = "這是密碼欄位，AI 不可以輸入。請呼叫 ask_user
 class Handled:
     outcome: ActionOutcome
     finish: LoopResult | None = None
+    locator: dict[str, Any] | None = None
 
 
 def describe(action: Action) -> dict[str, Any]:
@@ -109,4 +110,4 @@ class ActionHandler:
         result = await self._deps.executor.execute(action)
         outcome = ActionOutcome(action.call_id, action.kind.value, ok=result.ok, message=result.message,
                                 data=result.data, safety_acknowledged=acknowledged)
-        return Handled(outcome)
+        return Handled(outcome, locator=dict(result.locator) if result.locator else None)

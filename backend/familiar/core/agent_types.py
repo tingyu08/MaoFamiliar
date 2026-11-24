@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
+
+if TYPE_CHECKING:
+    from familiar.knowledge.decision_actor import DecisionActor
 
 from familiar.backends.base import ActionBackend
 from familiar.core.control import TaskControl
@@ -62,6 +65,9 @@ class StepInfo:
     duration_ms: int
     tokens_in: int = 0
     tokens_out: int = 0
+    locator: dict[str, Any] | None = None  # 技能錄製用
+    page_url: str | None = None            # 動作前的網址
+    decision_calls: int = 0                # 這一步用掉幾次 Decisions API
 
 
 @dataclass(frozen=True)
@@ -76,3 +82,4 @@ class LoopDeps:
     clock: Callable[[], datetime]
     on_step: Callable[[StepInfo], Awaitable[None]]
     on_status: Callable[[TaskStatus], Awaitable[None]]
+    actor: "DecisionActor | None" = None  # 第 3 層；None 表示停用

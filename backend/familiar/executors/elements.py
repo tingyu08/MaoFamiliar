@@ -17,10 +17,15 @@ class Element:
     x2: float
     y2: float
     is_password: bool = False
+    css: str = ""
 
     @property
     def center(self) -> tuple[int, int]:
         return round((self.x1 + self.x2) / 2), round((self.y1 + self.y2) / 2)
+
+    @property
+    def box(self) -> dict[str, float]:
+        return {"x1": self.x1, "y1": self.y1, "x2": self.x2, "y2": self.y2}
 
 
 @dataclass(frozen=True)
@@ -29,6 +34,15 @@ class ElementTable:
 
     def find(self, ref: str) -> Element | None:
         return next((e for e in self.elements if e.ref == ref), None)
+
+    def match(self, role: str, name: str) -> Element | None:
+        """role 與名稱都相同、而且只有一個時才回傳（避免點錯）。"""
+        found = [e for e in self.elements if e.role == role and e.name == name]
+        return found[0] if len(found) == 1 else None
+
+    def match_name(self, name: str) -> Element | None:
+        found = [e for e in self.elements if name and e.name == name]
+        return found[0] if len(found) == 1 else None
 
     def to_text(self) -> str:
         """精簡文字格式：每行「e3 button「登入」」。"""

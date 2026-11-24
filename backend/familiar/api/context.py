@@ -9,6 +9,7 @@ from typing import Callable
 from familiar.core.events import EventBus
 from familiar.core.task_runner import TaskRunner
 from familiar.gemini.model_router import ModelRouter
+from familiar.knowledge.skill_store import SkillStore
 from familiar.storage.artifact_store import ArtifactStore
 from familiar.storage.task_repository import TaskRepository
 
@@ -23,6 +24,7 @@ class Services:
     router: ModelRouter
     events: EventBus
     close: Callable[[], None] = lambda: None  # 關閉資料庫等資源
+    skills: SkillStore | None = None
 
 
 @dataclass(frozen=True)

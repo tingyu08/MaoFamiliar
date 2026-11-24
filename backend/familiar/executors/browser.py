@@ -11,8 +11,8 @@ from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import async_playwright
 
 from familiar.core.models import Action, ActionKind, Environment, Frame
-from familiar.executors.base import ExecResult, Screenshot
-from familiar.executors.dom_snapshot import ref_selector, snapshot_elements
+from familiar.executors.base import ELEMENT_KINDS, ExecResult, Screenshot
+from familiar.executors.dom_snapshot import describe_point, describe_ref, mark_css, ref_selector, snapshot_elements
 from familiar.executors.elements import ElementTable
 from familiar.executors.keys import to_playwright_combo
 
@@ -103,13 +103,45 @@ class BrowserExecutor:
         handler = _HANDLERS.get(action.kind)
         if handler is None:
             return ExecResult(False, f"瀏覽器不支援這個動作：{action.kind.value}")
+        locator = await self._locate(action)  # 動作前先記，點擊後元素可能就消失了
         try:
             await handler(self.page, action)
             await self._settle()
         except (PlaywrightError, asyncio.TimeoutError) as error:
             logger.info("動作執行失敗 %s：%s", action.kind.value, error)
             return ExecResult(False, _short(error, action))
-        return ExecResult(True)
+        return ExecResult(True, locator=locator)
+
+    async def element_at(self, x: float, y: float) -> dict[str, Any] | None:
+        """座標上（最接近的可互動）元素的描述；重播用座標定位前先確認。"""
+        try:
+            return await describe_point(self.page, x, y)
+        except PlaywrightError:
+            return None
+
+    async def ref_for_css(self, css: str) -> str | None:
+        try:
+            return await mark_css(self.page, css)
+        except PlaywrightError:
+            return None
+
+    async def _locate(self, action: Action) -> dict[str, Any] | None:
+        """技能錄製用的定位資訊：role、名稱、CSS 路徑、位置與畫面大小。"""
+        if action.kind.value not in ELEMENT_KINDS:
+            return None
+        try:
+            if "ref" in action.args:
+                described = await describe_ref(self.page, str(action.args["ref"]))
+            else:
+                described = await describe_point(self.page, action.args["x"], action.args["y"])
+        except PlaywrightError:
+            return None
+        if not described:
+            return None
+        size = self.page.viewport_size or self._viewport
+        point = ((action.args["x"], action.args["y"]) if "x" in action.args else
+                 (round((described["x1"] + described["x2"]) / 2), round((described["y1"] + described["y2"]) / 2)))
+        return {**described, "point": list(point), "frame": [size["width"], size["height"]]}
 
     async def _settle(self) -> None:
         try:
