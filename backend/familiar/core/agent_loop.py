@@ -78,13 +78,16 @@ class AgentLoop:
         last_was_actor = False
         reflex_steps = 0  # 反射層按鍵的步數不算進 max_steps（那是給代理人與第 3 層的上限）
         recent: tuple[tuple[str, str], ...] = ()  # 代理人最近的動作（簽章, 說明），偵測一直重複同一個動作
+        looked_only = False  # 上一輪代理人只呼叫了 zoom
 
         while True:
             stop = self._limit_reached(spec, steps - reflex_steps, started)
             if stop:
                 return stop
             observation = await self._observe(hashes, realtime=spec.mode is OperatingMode.REALTIME)
-            hashes = (*hashes, observation.phash)
+            if not looked_only:  # 上一輪只有 zoom（只看不動）時畫面本來就不會變，不算卡住
+                hashes = (*hashes, observation.phash)
+            looked_only = False
             if unchanged_streak(hashes) >= config.stuck_stop_steps:
                 return LoopResult(TaskStatus.FAILED, error="畫面連續多步沒有變化，任務停止", steps=steps)
             observation = _with_repeat_note(observation, recent, config.repeat_warn_actions)
@@ -141,7 +144,9 @@ class AgentLoop:
                 continue
 
             outcomes: list[ActionOutcome] = []
-            for position, item in enumerate(deps.backend.parse(turn.function_calls, observation.shot.frame)):
+            items = deps.backend.parse(turn.function_calls, observation.shot.frame)
+            looked_only = bool(items) and all(_is_zoom(item) for item in items)
+            for position, item in enumerate(items):
                 began = time.perf_counter()
                 if _is_reflex(item) and deps.reflex is not None and deps.reflex.config.enabled:
                     run = await run_reflex(deps, handler, item, observation.info, steps,
@@ -288,6 +293,10 @@ def _with_repeat_note(observation: Observation, recent: tuple[tuple[str, str], .
 
 def _is_reflex(item: Action | CallError) -> bool:
     return isinstance(item, Action) and item.kind is ActionKind.SET_REFLEX
+
+
+def _is_zoom(item: Action | CallError) -> bool:
+    return isinstance(item, Action) and item.kind is ActionKind.ZOOM
 
 
 def _history_line(item: Action | CallError, outcome: ActionOutcome) -> str:

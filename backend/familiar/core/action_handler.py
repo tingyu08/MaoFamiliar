@@ -11,6 +11,7 @@ from familiar.core.events import make_event
 from familiar.core.models import Action, ActionKind, ActionOutcome, CallError, Environment, thaw
 from familiar.core.safety import SafetyContext, SafetyResult, Verdict, evaluate
 from familiar.core.tasks import TaskStatus
+from familiar.vision.images import zoom_png
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +19,7 @@ PLANNING_KINDS = frozenset({ActionKind.COMPLETE_SUBGOAL, ActionKind.REVISE_PLAN}
 KNOWLEDGE_KINDS = frozenset({ActionKind.REGISTER_STATE, ActionKind.SAVE_NOTE, ActionKind.USE_SKILL,
                              ActionKind.REQUEST_MODE})
 PASSWORD_MESSAGE = "這是密碼欄位，AI 不可以輸入。請呼叫 ask_user 請使用者自己輸入。"
+ZOOM_MESSAGE = "第一張圖是放大後的區域；如果後面還有一張，那是目前的整個畫面。"
 
 
 @dataclass(frozen=True)
@@ -51,6 +53,8 @@ class ActionHandler:
                 return Handled(self._error(action, rejection or ""), decision_calls=calls)
             outcome = self._ok(action) if finish.status is TaskStatus.SUCCEEDED else self._error(action, finish.error or "")
             return Handled(outcome, finish, decision_calls=calls)
+        if action.kind is ActionKind.ZOOM:
+            return await self._zoom(action)
         if action.kind is ActionKind.ASK_USER:
             return await self._ask_user(action, steps)
         if action.kind in PLANNING_KINDS:
@@ -89,6 +93,16 @@ class ActionHandler:
 
     def _error(self, action: Action, message: str) -> ActionOutcome:
         return ActionOutcome(action.call_id, action.kind.value, ok=False, message=message)
+
+    async def _zoom(self, action: Action) -> Handled:
+        """只看不動：重新截圖、裁出區域放大，放大圖附在 function_result 裡給模型（FR-113）。"""
+        shot = await self._deps.executor.screenshot()
+        box = {key: float(action.args[key]) for key in ("x1", "y1", "x2", "y2")}
+        try:
+            zoomed = zoom_png(shot.png, box)
+        except ValueError as error:
+            return Handled(self._error(action, str(error)))
+        return Handled(ActionOutcome(action.call_id, action.kind.value, ok=True, message=ZOOM_MESSAGE, zoom_png=zoomed))
 
     async def _ask_user(self, action: Action, steps: int) -> Handled:
         control, events = self._deps.control, self._deps.events

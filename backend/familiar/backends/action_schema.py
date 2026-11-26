@@ -98,6 +98,14 @@ WAIT: tuple[Tool, ...] = (
     _tool(ActionKind.WAIT, f"等待畫面變化（最多 {MAX_WAIT_SECONDS:g} 秒）", {"seconds": {"type": "number"}}, []),
 )
 
+OBSERVE: tuple[Tool, ...] = (
+    _tool(ActionKind.ZOOM,
+          "放大畫面上的一塊矩形區域，回傳高解析度的放大圖（只看、不會操作畫面）。截圖上的小字、數字、"
+          "小圖示（例如評分星等、價格、勾選狀態、圖表刻度）看不清楚時，先放大看清楚再回答，不要猜。"
+          "(x1, y1) 是左上角、(x2, y2) 是右下角",
+          {"x1": _COORD, "y1": _COORD, "x2": _COORD, "y2": _COORD}, ["x1", "y1", "x2", "y2"]),
+)
+
 FLOW: tuple[Tool, ...] = (
     _tool(ActionKind.ASK_USER, "需要使用者協助時呼叫（登入、驗證碼、資訊不足、不確定是否安全）",
           {"reason": {"type": "string"}}, ["reason"]),
@@ -123,7 +131,7 @@ REQUEST_MODE: tuple[Tool, ...] = (
           {"mode": {"type": "string", "enum": ["ui", "realtime"]}, "reason": {"type": "string"}}, ["mode"]),
 )
 
-_COMMON = (*FLOW, *PLANNING, *KNOWLEDGE)
+_COMMON = (*OBSERVE, *FLOW, *PLANNING, *KNOWLEDGE)
 
 
 def custom_tools(env: Environment, mode: OperatingMode) -> tuple[Tool, ...]:

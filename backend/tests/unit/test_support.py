@@ -4,11 +4,12 @@ import asyncio
 import base64
 import io
 
+import pytest
 from PIL import Image, ImageDraw
 
 from familiar.core.control import TaskControl
 from familiar.core.events import QUEUE_SIZE, EventBus, make_event
-from familiar.vision.images import downscale_png, dhash, hamming, thumbnail_b64, unchanged_streak
+from familiar.vision.images import downscale_png, dhash, hamming, thumbnail_b64, unchanged_streak, zoom_png
 
 
 def png(color=(20, 20, 20), box=None, size=(320, 200)) -> bytes:
@@ -44,6 +45,22 @@ class TestImages:
         assert Image.open(io.BytesIO(smaller)).size == (1000, 500)
         small = png(size=(400, 300))
         assert downscale_png(small, 1000) is small
+
+    def test_zoom_crops_and_enlarges_small_region(self):
+        original = png(box=(100, 50, 180, 100))
+        zoomed = Image.open(io.BytesIO(zoom_png(original, {"x1": 100, "y1": 50, "x2": 180, "y2": 100}, side=800)))
+        assert zoomed.size == (800, 500)  # 80×50 的區域放大到長邊 800，比例不變
+        assert zoomed.getpixel((400, 250))[0] > 200  # 裁到的是白色方塊那一塊
+
+    def test_zoom_shrinks_region_larger_than_side(self):
+        zoomed = zoom_png(png(size=(2000, 1000)), {"x1": 0, "y1": 0, "x2": 2000, "y2": 1000}, side=1000)
+        assert Image.open(io.BytesIO(zoomed)).size == (1000, 500)
+
+    def test_zoom_clamps_to_image_and_rejects_tiny_region(self):
+        clamped = zoom_png(png(), {"x1": 300, "y1": 180, "x2": 400, "y2": 260}, side=200)
+        assert Image.open(io.BytesIO(clamped)).size == (200, 200)  # 只剩 20×20 在圖內
+        with pytest.raises(ValueError):
+            zoom_png(png(), {"x1": 10, "y1": 10, "x2": 12, "y2": 40})
 
 
 class TestEventBus:

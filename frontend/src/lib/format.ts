@@ -25,6 +25,7 @@ const KIND_LABEL: Record<string, string> = {
   click_element: "點擊元素",
   fill_element: "填寫欄位",
   wait: "等待",
+  zoom: "放大查看",
   ask_user: "請你協助",
   task_done: "完成任務",
   complete_subgoal: "完成子目標",

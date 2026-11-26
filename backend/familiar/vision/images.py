@@ -1,4 +1,4 @@
-"""截圖處理：差異雜湊（卡住偵測）、前端縮圖、送模型前縮小。"""
+"""截圖處理：差異雜湊（卡住偵測）、前端縮圖、送模型前縮小、zoom 放大。"""
 
 from __future__ import annotations
 
@@ -11,6 +11,8 @@ HASH_SIZE = 8
 SIMILAR_BITS = 4           # 64 位元中差異 ≤ 4 視為「幾乎相同」
 THUMB_WIDTH = 480
 THUMB_QUALITY = 60
+ZOOM_SIDE = 1024           # zoom 放大圖的長邊（像素）
+MIN_ZOOM_PIXELS = 4        # 裁切區域在原圖上至少要這麼大
 
 
 def _open(png: bytes) -> Image.Image:
@@ -56,6 +58,21 @@ def crop_png(png: bytes, box: dict[str, float]) -> bytes:
         return png
     buffer = io.BytesIO()
     image.crop((left, top, right, bottom)).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def zoom_png(png: bytes, box: dict[str, float], side: int = ZOOM_SIDE) -> bytes:
+    """裁出區域並把長邊縮放到 side：小字、小圖示（例如評分星等）放大後模型才看得清楚。"""
+    image = _open(png)
+    left, top = max(0, int(box["x1"])), max(0, int(box["y1"]))
+    right, bottom = min(image.width, int(box["x2"])), min(image.height, int(box["y2"]))
+    if right - left < MIN_ZOOM_PIXELS or bottom - top < MIN_ZOOM_PIXELS:
+        raise ValueError("要放大的區域太小，或不在畫面內")
+    region = image.crop((left, top, right, bottom))
+    scale = side / max(region.size)
+    resized = region.resize((round(region.width * scale), round(region.height * scale)), Image.Resampling.LANCZOS)
+    buffer = io.BytesIO()
+    resized.save(buffer, format="PNG")
     return buffer.getvalue()
 
 

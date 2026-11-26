@@ -81,13 +81,15 @@ def _text_part(outcome: ActionOutcome) -> dict[str, str]:
     return {"type": "text", "text": json.dumps(payload, ensure_ascii=False, default=str)}
 
 
+def _image_part(png: bytes) -> dict[str, str]:
+    return {"type": "image", "mime_type": "image/png", "data": base64.b64encode(png).decode("ascii")}
+
+
 def build_function_results(outcomes: Sequence[ActionOutcome]) -> list[dict[str, Any]]:
     results = []
     for outcome in outcomes:
-        parts: list[dict[str, str]] = [_text_part(outcome)]
-        if outcome.screenshot_png:
-            parts = [*parts, {"type": "image", "mime_type": "image/png",
-                              "data": base64.b64encode(outcome.screenshot_png).decode("ascii")}]
+        images = tuple(png for png in (outcome.zoom_png, outcome.screenshot_png) if png)
+        parts: list[dict[str, str]] = [_text_part(outcome), *(_image_part(png) for png in images)]
         step: dict[str, Any] = {"type": "function_result", "call_id": outcome.call_id,
                                 "name": outcome.name, "result": parts}
         if not outcome.ok:

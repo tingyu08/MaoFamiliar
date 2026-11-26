@@ -1,4 +1,8 @@
+import base64
+import io
 import json
+
+from PIL import Image
 
 from agent_fakes import ApiError, FakeExecutor, Harness, ScriptedClient, call, later, turn
 
@@ -6,6 +10,7 @@ from familiar.core.action_handler import PASSWORD_MESSAGE
 from familiar.core.agent_types import LoopConfig
 from familiar.core.models import ActionKind
 from familiar.core.tasks import TaskStatus
+from familiar.vision.images import ZOOM_SIDE
 
 
 def result_payload(request, index=-1):
@@ -23,6 +28,30 @@ async def test_repeating_the_same_action_warns_the_model():
     notes = [result_payload(r)[1].get("note", "") for r in h.client.requests[1:]]
     assert ["連續" in n for n in notes] == [False, False, False, True, True]
     assert "連續 4 次" in notes[3] and "hold_keys" in notes[3] and "連續 5 次" in notes[4]
+
+
+async def test_zoom_sends_an_enlarged_crop_without_touching_the_screen():
+    h = Harness(ScriptedClient(turn(call("zoom", "z", x1=0, y1=0, x2=500, y2=500)),
+                               turn(call("task_done", "d", summary="4 顆星"))))
+    result = await h.run()
+    assert result.status is TaskStatus.SUCCEEDED
+    assert h.executor.executed == []  # 只看不動：不交給執行器
+    step, payload = result_payload(h.client.requests[1])
+    assert payload["ok"] is True and "放大" in payload["message"]
+    images = [part for part in step["result"] if part["type"] == "image"]
+    assert len(images) == 2  # 放大圖＋最新的整個畫面
+    zoomed = Image.open(io.BytesIO(base64.b64decode(images[0]["data"])))
+    assert zoomed.size == (ZOOM_SIDE, ZOOM_SIDE * 100 // 160)  # 320×200 畫面的左上 160×100 放大
+    assert h.steps[0].action["kind"] == "zoom" and h.steps[0].ok
+
+
+async def test_consecutive_zooms_are_not_mistaken_for_being_stuck():
+    zooms = [turn(call("zoom", f"z{i}", x1=0, y1=100 * i, x2=999, y2=100 * i + 200), interaction_id=f"i{i}")
+             for i in range(5)]
+    h = Harness(ScriptedClient(*zooms, turn(call("task_done", "d", summary="看完了"))),
+                executor=FakeExecutor(static_screen=True), config=LoopConfig(stuck_stop_steps=3))
+    result = await h.run()
+    assert result.status is TaskStatus.SUCCEEDED  # 只放大不操作，畫面本來就不會變
 
 
 async def test_different_actions_do_not_warn():

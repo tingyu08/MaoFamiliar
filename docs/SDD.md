@@ -247,6 +247,7 @@ class ActionBackend(Protocol):
 | | `tap_keys` | `keys[], times` | 即時模式 |
 | 瀏覽器 | `navigate` / `go_back` | `url` | 瀏覽器 |
 | | `click_element` / `fill_element` | `ref`、`text` | 瀏覽器 |
+| 觀察 | `zoom` | `x1, y1, x2, y2`（左上到右下，寬高 ≥ 20） | 全部（含原生 `computer_use` 的搭配函式） |
 | 流程 | `wait` | `seconds` | 全部 |
 | | `ask_user` | `reason` | 全部 |
 | | `task_done` | `summary` | 全部 |
@@ -255,6 +256,8 @@ class ActionBackend(Protocol):
 | | `request_mode` | `mode, reason` | 桌面 |
 
 即時模式下，模型在同一輪最多可以回傳 5 個函式呼叫，這些呼叫組成一個動作區塊（FR-802）。
+
+`zoom`（FR-113）只看不動：`ActionHandler` 重新截圖、裁出區域、用 LANCZOS 縮放到長邊 1024px，放進 `ActionOutcome.zoom_png`。組 `function_result` 時放大圖排在整個畫面之前，所以同一則回應裡模型會先看到放大圖、再看到目前的完整截圖。這一輪如果只有 `zoom`，下一輪的畫面不計入卡住偵測（FR-108）。`zoom` 不在技能可重播的動作清單裡，錄製技能時自動略過。
 
 ### 4.3 對話長度控制
 

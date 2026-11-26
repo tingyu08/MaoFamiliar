@@ -2,6 +2,7 @@ import json
 
 import pytest
 
+from familiar.backends.action_schema import companion_tools
 from familiar.backends.custom_fc import CustomFcBackend
 from familiar.core.models import (
     Action,
@@ -44,6 +45,12 @@ class TestTools:
         names = self.names(backend, Environment.DESKTOP, OperatingMode.UI)
         assert "request_mode" in names
         assert "hold_keys" not in names and "navigate" not in names
+
+    def test_zoom_is_offered_everywhere(self, backend):
+        for env, mode in [(Environment.BROWSER, OperatingMode.UI), (Environment.BROWSER, OperatingMode.REALTIME),
+                          (Environment.DESKTOP, OperatingMode.UI), (Environment.DESKTOP, OperatingMode.REALTIME)]:
+            assert "zoom" in self.names(backend, env, mode)
+        assert "zoom" in {t["name"] for t in companion_tools(Environment.BROWSER)}  # 原生 computer_use 也能用
 
     def test_every_tool_is_a_valid_declaration(self, backend):
         for tool in backend.tools(Environment.DESKTOP, OperatingMode.REALTIME):
@@ -123,6 +130,16 @@ class TestParse:
         [bad] = backend.parse([call("click_element", ref="button", intent="點")], FRAME)
         assert isinstance(bad, CallError)
 
+    def test_zoom_region_converts_to_pixels(self, backend):
+        [action] = backend.parse([call("zoom", x1=0, y1=0, x2=500, y2=500, intent="看星等")], FRAME)
+        assert action.kind is ActionKind.ZOOM
+        assert dict(action.args) == {"x1": 0, "y1": 0, "x2": 640, "y2": 400}
+
+    def test_zoom_rejects_inverted_or_tiny_region(self, backend):
+        inverted, tiny = backend.parse([call("zoom", "a", x1=500, y1=0, x2=100, y2=500, intent="x"),
+                                        call("zoom", "b", x1=100, y1=100, x2=105, y2=400, intent="x")], FRAME)
+        assert isinstance(inverted, CallError) and isinstance(tiny, CallError)
+
     def test_extra_arguments_are_ignored(self, backend):
         [action] = backend.parse([call("wait", seconds=1, intent="等", foo="bar")], FRAME)
         assert "foo" not in action.args
@@ -146,6 +163,14 @@ class TestBuildResults:
         assert step["is_error"] is True
         assert len(step["result"]) == 1
         assert json.loads(step["result"][0]["text"])["error"] == "找不到元素"
+
+    def test_zoom_image_comes_before_the_screenshot(self, backend):
+        outcome = ActionOutcome(call_id="z", name="zoom", ok=True, message="第一張是放大圖",
+                                zoom_png=b"ZOOM", screenshot_png=b"SHOT")
+        [step] = backend.build_results([outcome])
+        text, zoom, shot = step["result"]
+        assert json.loads(text["text"])["message"] == "第一張是放大圖"
+        assert [zoom["data"], shot["data"]] == ["Wk9PTQ==", "U0hPVA=="]  # base64 的 ZOOM、SHOT
 
     def test_safety_acknowledgement_is_included(self, backend):
         outcome = ActionOutcome(call_id="c3", name="click", ok=True, safety_acknowledged=True)

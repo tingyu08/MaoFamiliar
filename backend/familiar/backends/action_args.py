@@ -103,6 +103,22 @@ class FillElementArgs(_Impactful):
     text: str = Field(min_length=1, max_length=MAX_TEXT)
 
 
+MIN_ZOOM_SPAN = 20  # 正規化座標：放大區域的寬、高至少是畫面的 2%
+
+
+class ZoomArgs(_Base):
+    x1: Coord
+    y1: Coord
+    x2: Coord
+    y2: Coord
+
+    @model_validator(mode="after")
+    def _valid_region(self) -> "ZoomArgs":
+        if self.x2 - self.x1 < MIN_ZOOM_SPAN or self.y2 - self.y1 < MIN_ZOOM_SPAN:
+            raise ValueError(f"區域要從左上 (x1, y1) 到右下 (x2, y2)，寬和高都至少 {MIN_ZOOM_SPAN}")
+        return self
+
+
 class WaitArgs(_Base):
     seconds: float = Field(default=1, ge=0, le=MAX_WAIT_SECONDS)
 
@@ -198,6 +214,7 @@ ARG_MODELS: dict[ActionKind, type[_Base]] = {
     ActionKind.GO_BACK: GoBackArgs,
     ActionKind.CLICK_ELEMENT: ClickElementArgs,
     ActionKind.FILL_ELEMENT: FillElementArgs,
+    ActionKind.ZOOM: ZoomArgs,
     ActionKind.WAIT: WaitArgs,
     ActionKind.ASK_USER: AskUserArgs,
     ActionKind.TASK_DONE: TaskDoneArgs,
@@ -216,4 +233,5 @@ POINT_FIELDS: dict[ActionKind, tuple[tuple[str, str], ...]] = {
     ActionKind.RIGHT_CLICK: (("x", "y"),),
     ActionKind.SCROLL: (("x", "y"),),
     ActionKind.DRAG: (("x1", "y1"), ("x2", "y2")),
+    ActionKind.ZOOM: (("x1", "y1"), ("x2", "y2")),
 }

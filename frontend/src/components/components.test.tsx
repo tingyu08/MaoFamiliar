@@ -16,6 +16,7 @@ describe("format", () => {
       title: "填寫欄位", detail: "填寫欄位 「小明」",
     });
     expect(describeAction({ kind: "press_keys", args: { keys: ["ctrl", "s"] }, intent: "存檔" }).detail).toBe("按鍵 ctrl + s");
+    expect(describeAction({ kind: "zoom", args: { x1: 0, y1: 0, x2: 640, y2: 400 }, intent: "" }).title).toBe("放大查看");
     expect(shortModel("gemini-3.5-flash-lite")).toBe("3.5 flash lite");
     expect(isHttpUrl("javascript:alert(1)")).toBe(false);
     expect(isHttpUrl("https://example.com")).toBe(true);

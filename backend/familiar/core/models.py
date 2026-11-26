@@ -44,6 +44,8 @@ class ActionKind(StrEnum):
     GO_BACK = "go_back"
     CLICK_ELEMENT = "click_element"
     FILL_ELEMENT = "fill_element"
+    # 觀察（只看不動）
+    ZOOM = "zoom"  # 放大畫面上的一塊區域，看清楚小字、小圖示
     # 流程
     WAIT = "wait"
     ASK_USER = "ask_user"
@@ -153,6 +155,7 @@ class ActionOutcome:
     data: Mapping[str, Any] = field(default_factory=dict)
     screenshot_png: bytes | None = None
     safety_acknowledged: bool = False
+    zoom_png: bytes | None = None  # zoom 的放大圖；排在 screenshot_png 之前送給模型
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "data", _freeze(dict(self.data)))
