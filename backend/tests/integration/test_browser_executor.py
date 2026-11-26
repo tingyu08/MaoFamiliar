@@ -1,5 +1,7 @@
 """BrowserExecutor 整合測試：真的開 Chromium（headless）操作本機測試網頁。"""
 
+import time
+
 from familiar.core.models import Action, ActionKind, Environment, Frame
 
 
@@ -138,6 +140,48 @@ async def test_reveal_focus_scrolls_a_clipped_game_into_view(browser, page_serve
 
 async def test_focus_box_without_game_area(browser):
     assert await browser.focus_box() is None
+
+
+# 模擬網站在快照之後重新渲染（例如維基百科聚焦搜尋框時換成動態元件）：節點換新，標記跟著消失
+_REPLACE_JS = """(css) => { const old = document.querySelector(css); const copy = old.cloneNode(true);
+  copy.removeAttribute('data-familiar-ref'); old.replaceWith(copy); }"""
+
+
+async def test_stale_ref_is_found_again_by_role_and_name(browser):
+    table = await browser.elements()
+    name, submit = by_name(table, "你的名字"), by_name(table, "送出表單")
+    await browser.page.evaluate(_REPLACE_JS, "#name")
+    await browser.page.evaluate(_REPLACE_JS, "#go")
+
+    filled = await browser.execute(Action(ActionKind.FILL_ELEMENT, {"ref": name.ref, "text": "小明"}))
+    clicked = await browser.execute(Action(ActionKind.CLICK_ELEMENT, {"ref": submit.ref}))
+    assert filled.ok and clicked.ok
+    assert await out_text(browser) == "已點擊:小明"
+    assert clicked.locator["name"] == "送出表單"  # 技能錄製仍拿得到定位資訊
+
+
+async def test_stale_ref_fails_fast_when_element_is_gone(browser):
+    table = await browser.elements()
+    await browser.page.evaluate("document.getElementById('go').remove()")
+    started = time.perf_counter()
+    result = await browser.execute(Action(ActionKind.CLICK_ELEMENT, {"ref": by_name(table, "送出表單").ref}))
+    assert not result.ok and "頁面已更新" in result.message
+    assert time.perf_counter() - started < 2  # 不再空等 5 秒逾時
+
+
+async def test_stale_ref_is_not_guessed_when_ambiguous_or_password(browser):
+    table = await browser.elements()
+    await browser.page.evaluate(_REPLACE_JS, "#go")
+    await browser.page.evaluate("document.body.insertAdjacentHTML('beforeend', '<button>送出表單</button>')")
+    ambiguous = await browser.execute(Action(ActionKind.CLICK_ELEMENT, {"ref": by_name(table, "送出表單").ref}))
+    assert not ambiguous.ok and await out_text(browser) == "尚未點擊"  # 兩個同名按鈕 → 不猜
+
+    # 原本的名字欄位消失、出現同名的密碼欄位 → 不能把文字填進密碼欄
+    await browser.page.evaluate("""() => { document.getElementById('name').remove();
+      document.body.insertAdjacentHTML('beforeend', '<input id="fake" type="password" placeholder="你的名字">'); }""")
+    filled = await browser.execute(Action(ActionKind.FILL_ELEMENT, {"ref": by_name(table, "你的名字").ref, "text": "x"}))
+    assert not filled.ok
+    assert await browser.page.locator("#fake").input_value() == ""
 
 
 async def test_errors_are_returned_not_raised(browser):

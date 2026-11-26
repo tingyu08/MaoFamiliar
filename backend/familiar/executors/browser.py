@@ -12,7 +12,8 @@ from playwright.async_api import async_playwright
 
 from familiar.core.models import Action, ActionKind, Environment, Frame
 from familiar.executors.base import ELEMENT_KINDS, ExecResult, Screenshot
-from familiar.executors.dom_snapshot import describe_point, describe_ref, mark_css, ref_selector, snapshot_elements
+from familiar.executors.dom_snapshot import (describe_point, describe_ref, ensure_ref, mark_css, ref_selector,
+                                             snapshot_elements)
 from familiar.executors.elements import ElementTable
 from familiar.executors.keys import to_playwright_combo, to_playwright_key
 
@@ -22,6 +23,7 @@ NAV_TIMEOUT_MS = 30_000
 ELEMENT_TIMEOUT_MS = 5_000
 SETTLE_TIMEOUT_MS = 3_000
 SCROLL_PIXELS_PER_NOTCH = 100
+REF_KINDS = frozenset({ActionKind.CLICK_ELEMENT, ActionKind.FILL_ELEMENT})
 TAP_GAP_SEC = 0.05
 TAP_HOLD_MS = 100  # 24fps 的 Flash 遊戲一格約 42ms；實測瞬間按放幾乎都被漏掉，按住才有反應
 # 網頁遊戲畫面：可見範圍內最大的 canvas／iframe／embed／object／video（至少 200×150）
@@ -130,6 +132,8 @@ class BrowserExecutor:
         handler = _HANDLERS.get(action.kind)
         if handler is None:
             return ExecResult(False, f"瀏覽器不支援這個動作：{action.kind.value}")
+        if action.kind in REF_KINDS and not await self._ensure_ref(action):
+            return ExecResult(False, f"元素 {action.args.get('ref')} 已經不在頁面上（頁面已更新），請重新查看元素清單")
         locator = await self._locate(action)  # 動作前先記，點擊後元素可能就消失了
         try:
             await handler(self.page, action)
@@ -165,6 +169,14 @@ class BrowserExecutor:
             return await mark_css(self.page, css)
         except PlaywrightError:
             return None
+
+    async def _ensure_ref(self, action: Action) -> bool:
+        """快照後網站重新渲染、標記消失時，先用 role＋名稱找回元素；找不到就立刻失敗，不空等逾時。"""
+        ref = str(action.args.get("ref"))
+        try:
+            return await ensure_ref(self.page, ref, self._table.find(ref))
+        except PlaywrightError:
+            return True  # 檢查本身失敗（例如頁面正在跳轉）時照舊執行，交給動作本身回報錯誤
 
     async def _locate(self, action: Action) -> dict[str, Any] | None:
         """技能錄製用的定位資訊：role、名稱、CSS 路徑、位置與畫面大小。"""

@@ -102,6 +102,25 @@ _MARK_CSS_JS = r"""([css, refAttr, ref]) => {
 }"""
 
 
+# 網站在快照之後重新渲染（換掉節點）時標記會消失：用快照時的 role＋名稱＋是否密碼欄，
+# 找回「唯一」相符的可見元素重新標記；找不到或有多個就不猜
+_REMARK_JS = "([ref, role, name, isPassword, refAttr]) => {" + _HELPERS + r"""
+  if (document.querySelector(`[${refAttr}="${ref}"]`)) return 'present';
+  if (!name) return 'missing';
+  const matches = [...document.querySelectorAll(SELECTOR)].filter(el => {
+    const r = el.getBoundingClientRect();
+    if (r.width < 2 || r.height < 2) return false;
+    const style = getComputedStyle(el);
+    if (style.visibility === 'hidden' || style.display === 'none' || el.disabled) return false;
+    return roleOf(el) === role && nameOf(el) === name && (typeOf(el) === 'password') === isPassword;
+  });
+  if (matches.length !== 1) return 'missing';
+  matches[0].setAttribute(refAttr, ref);
+  return 'remarked';
+}
+"""
+
+
 def _element(raw: dict[str, Any]) -> Element:
     return Element(ref=str(raw["ref"]), role=str(raw["role"]), name=str(raw["name"]),
                    x1=float(raw["x1"]), y1=float(raw["y1"]), x2=float(raw["x2"]), y2=float(raw["y2"]),
@@ -125,6 +144,13 @@ async def mark_css(page: Any, css: str) -> str | None:
     """CSS 只對到唯一一個元素時，替它標上 CSS_REF 並回傳；否則回傳 None。"""
     found = await page.evaluate(_MARK_CSS_JS, [css, REF_ATTR, CSS_REF])
     return CSS_REF if found else None
+
+
+async def ensure_ref(page: Any, ref: str, element: Element | None) -> bool:
+    """標記還在，或依快照的 role＋名稱找回唯一相符的元素並重新標記時回傳 True。"""
+    role, name, is_password = (element.role, element.name, element.is_password) if element else ("", "", False)
+    status = await page.evaluate(_REMARK_JS, [ref, role, name, is_password, REF_ATTR])
+    return status != "missing"
 
 
 def ref_selector(ref: str) -> str:
