@@ -149,8 +149,10 @@ class Harness:
     def __init__(self, client: ScriptedClient, executor: FakeExecutor | None = None,
                  config: LoopConfig | None = None, chain=("lite", "flash"),
                  on_event: Callable[[dict[str, Any]], None] | None = None, decisions: Any = None,
-                 completion: Any = None, reflex: Any = None, reflex_config: ReflexConfig | None = None):
+                 completion: Any = None, reflex: Any = None, reflex_config: ReflexConfig | None = None,
+                 clock: Callable[[], datetime] | None = None):
         self.client = client
+        clock = clock or (lambda: datetime.now(UTC))
         self.executor = executor or FakeExecutor()
         self.control = TaskControl()
         self.sink = RecordingSink(on_event)
@@ -161,13 +163,13 @@ class Harness:
             return None
 
         router = ModelRouter(RouterConfig(chains={Role.ACTION: chain, Role.DECISION: ("decision-1",)}),
-                             clock=lambda: datetime.now(UTC), sleep=no_sleep)
+                             clock=clock, sleep=no_sleep)
         actor = DecisionActor(router, decisions) if decisions is not None else None
         checker = CompletionChecker(router, completion) if completion is not None else None
         decider = ReflexDecider(router, reflex, reflex_config) if reflex is not None else None
         deps = LoopDeps(router=router, client=client, backend=CustomFcBackend(), executor=self.executor,
                         events=self.sink, control=self.control, safety=SafetyConfig(),
-                        clock=lambda: datetime.now(UTC), on_step=self._on_step, on_status=self._on_status,
+                        clock=clock, on_step=self._on_step, on_status=self._on_status,
                         actor=actor, completion=checker, reflex=decider)
         self.loop = AgentLoop(deps, config or LoopConfig())
 

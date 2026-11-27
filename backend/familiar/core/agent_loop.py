@@ -115,8 +115,10 @@ class AgentLoop:
                     tokens_of=lambda pair: pair[0].tokens_in,
                 )
             except NoModelAvailable as error:
+                wait_began = deps.clock()
                 if await self._wait_for_quota(spec, error):
                     return LoopResult(TaskStatus.STOPPED, steps=steps)
+                started = started + (deps.clock() - wait_began)  # 等額度的時間不算進時間上限（FR-206a）
                 continue
             except Exception as error:  # noqa: BLE001 — 依種類決定重試或結束
                 failures += 1

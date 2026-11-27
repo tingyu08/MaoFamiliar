@@ -198,6 +198,23 @@ async def test_no_model_available_waits_then_stop():
     assert TaskStatus.WAITING_QUOTA in h.statuses
 
 
+async def test_time_spent_waiting_for_quota_does_not_count_towards_time_limit():
+    from datetime import UTC, datetime, timedelta
+
+    now = [datetime(2026, 11, 27, 1, 0, tzinfo=UTC)]
+
+    def quota_back_after_40_minutes(event):
+        if event["type"] == "waiting_quota":
+            now[0] += timedelta(minutes=40)
+
+    h = Harness(ScriptedClient(ApiError(429, "20 requests per day. Please retry in 40m0s"), turn(text="完成")),
+                chain=("lite",), on_event=quota_back_after_40_minutes, clock=lambda: now[0],
+                config=LoopConfig(max_minutes=30, max_quota_wait_sec=0.01))
+    result = await h.run()
+    assert result.status is TaskStatus.SUCCEEDED  # 等了 40 分鐘額度，但實際執行沒超過 30 分鐘
+    assert h.statuses == [TaskStatus.WAITING_QUOTA, TaskStatus.RUNNING]
+
+
 async def test_safety_block_retries_once_then_fails():
     blocked = ApiError(400, "Request blocked due to safety violations")
     h = Harness(ScriptedClient(blocked, blocked))
